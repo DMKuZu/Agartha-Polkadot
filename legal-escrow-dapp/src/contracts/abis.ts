@@ -1,5 +1,7 @@
-export const FACTORY_ADDRESS = "0x688c0611a5691B7c1F09a694bf4ADfb456a58Cf7";
-export const LEDGER_ADDRESS = "0x4815A8Ba613a3eB21A920739dE4cA7C439c7e1b1";
+// Local: populated automatically by backend/scripts/deploy.js via .env.local
+// Sepolia: hardcoded fallback for testnet use
+export const FACTORY_ADDRESS = (process.env.NEXT_PUBLIC_FACTORY_ADDRESS ?? "0x688c0611a5691B7c1F09a694bf4ADfb456a58Cf7") as `0x${string}`;
+export const LEDGER_ADDRESS = (process.env.NEXT_PUBLIC_LEDGER_ADDRESS ?? "0x4815A8Ba613a3eB21A920739dE4cA7C439c7e1b1") as `0x${string}`;
 
 export const FACTORY_ABI = [
 	{
