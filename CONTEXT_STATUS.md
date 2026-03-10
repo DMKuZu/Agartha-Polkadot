@@ -144,6 +144,14 @@ npm run dev
 ### Contract address resolution
 `abis.ts` reads `NEXT_PUBLIC_FACTORY_ADDRESS` and `NEXT_PUBLIC_LEDGER_ADDRESS` from `.env.local` first. Falls back to the Sepolia addresses if those vars are absent. No manual address editing needed after running the deploy script.
 
+### MetaMask nonce reset (required after every `hardhat node` restart)
+When `npx hardhat node` restarts, the chain resets to block 0 but MetaMask still caches the old nonce for each Hardhat test account. This causes all transactions from those accounts to hang silently.
+
+**Fix — do this for every Hardhat test account imported into MetaMask:**
+MetaMask → click the account → three-dot menu → Settings → Advanced → **Clear activity and nonce data**
+
+Do this once per `npx hardhat node` session before submitting any transactions.
+
 ---
 
 ## Tech Stack
@@ -211,3 +219,5 @@ useReadContract()                 // read escrow/ledger/factory state
 |------|--------|
 | 2026-03-10 | Initial CONTEXT_STATUS.md created. Days 15–16 in progress. |
 | 2026-03-10 | Local testing setup: added `backend/scripts/deploy.js`, `hardhat.config.js` localhost network, `hardhat` chain to `Web3Provider.tsx`, env var address resolution in `abis.ts`. |
+| 2026-03-11 | Created `requirements.md` with all library versions. Updated `README.md` with local + Sepolia testing instructions and end-to-end settlement flow. |
+| 2026-03-11 | Fixed `page.tsx`: address args now cast as `0x${string}`, added `isAddress` validation, inline address format errors, transaction error surface via `isError`/`error.message`, lawyer address displayed in UI. Added MetaMask nonce reset instructions to local testing section. |

@@ -4,20 +4,19 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { RicardianUploader } from '../components/RicardianUploader';
 import { useState } from 'react';
 import { useAccount, useWriteContract } from 'wagmi';
-import { parseEther } from 'viem';
+import { parseEther, isAddress } from 'viem';
 
-// Ensure your abis.ts file has the correct address and ABI exported
 import { FACTORY_ADDRESS, FACTORY_ABI } from '../contracts/abis';
 
 export default function Home() {
-  const { address, isConnected } = useAccount(); // Gets the connected lawyer's wallet address
-  const { writeContract, isPending, isSuccess, data: hash } = useWriteContract();
+  const { address, isConnected } = useAccount();
+  const { writeContract, isPending, isSuccess, isError, error, data: hash } = useWriteContract();
 
-  // Form State
   const [documentHash, setDocumentHash] = useState<string>('');
   const [buyerAddress, setBuyerAddress] = useState<string>('');
   const [sellerAddress, setSellerAddress] = useState<string>('');
   const [settlementAmount, setSettlementAmount] = useState<string>('');
+  const [validationError, setValidationError] = useState<string>('');
 
   const handleHashGenerated = (hash: string) => {
     setDocumentHash(hash);
@@ -25,15 +24,26 @@ export default function Home() {
 
   const handleDeployContract = async (e: React.SubmitEvent) => {
     e.preventDefault();
-    if (!documentHash) return alert("Please upload and hash a document first!");
-    if (!buyerAddress ||!sellerAddress ||!settlementAmount) return alert("Please fill in all fields!");
+    setValidationError('');
 
-    // This triggers MetaMask to execute the transaction on the blockchain
+    if (!documentHash) return setValidationError('Please upload and hash a document first.');
+    if (!buyerAddress || !sellerAddress || !settlementAmount) return setValidationError('Please fill in all fields.');
+    if (!isAddress(buyerAddress)) return setValidationError('Buyer address is not a valid Ethereum address.');
+    if (!isAddress(sellerAddress)) return setValidationError('Seller address is not a valid Ethereum address.');
+    if (buyerAddress.toLowerCase() === sellerAddress.toLowerCase()) return setValidationError('Buyer and seller cannot be the same address.');
+    if (parseFloat(settlementAmount) <= 0) return setValidationError('Settlement amount must be greater than 0.');
+
     writeContract({
-      address: FACTORY_ADDRESS as `0x${string}`,
+      address: FACTORY_ADDRESS,
       abi: FACTORY_ABI,
       functionName: 'createCase',
-      args: [buyerAddress, sellerAddress, address,  parseEther(settlementAmount), documentHash],
+      args: [
+        buyerAddress as `0x${string}`,
+        sellerAddress as `0x${string}`,
+        address as `0x${string}`,
+        parseEther(settlementAmount),
+        documentHash,
+      ],
     });
   };
 
@@ -50,61 +60,82 @@ export default function Home() {
 
         <hr className="border-slate-200 mb-8" />
 
-        {/* Step 1: The Ricardian Engine */}
         <RicardianUploader onHashGenerated={handleHashGenerated} />
 
-        {/* Step 2: Contract Deployment Form (Only shows if a wallet is connected) */}
         {isConnected && (
           <div className="mt-8 p-6 bg-slate-50 rounded-lg border border-slate-200">
-            <h2 className="text-xl font-semibold mb-4 text-slate-700">2. Deploy Settlement Contract</h2>
-            
+            <h2 className="text-xl font-semibold mb-1 text-slate-700">2. Deploy Settlement Contract</h2>
+            <p className="text-sm text-slate-500 mb-4">
+              Your connected wallet <span className="font-mono font-semibold text-slate-700">{address}</span> will be recorded as the <strong>lawyer</strong>.
+            </p>
+
             <form onSubmit={handleDeployContract} className="flex flex-col gap-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Buyer Wallet Address</label>
-                <input 
-                  type="text" 
-                  placeholder="0x..." 
-                  className="w-full p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black"
+                <input
+                  type="text"
+                  placeholder="0x..."
+                  className="w-full p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black font-mono text-sm"
                   value={buyerAddress}
-                  onChange={(e) => setBuyerAddress(e.target.value)}
+                  onChange={(e) => setBuyerAddress(e.target.value.trim())}
                 />
+                {buyerAddress && !isAddress(buyerAddress) && (
+                  <p className="text-xs text-red-500 mt-1">Invalid address format.</p>
+                )}
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Seller Wallet Address</label>
-                <input 
-                  type="text" 
-                  placeholder="0x..." 
-                  className="w-full p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black"
+                <input
+                  type="text"
+                  placeholder="0x..."
+                  className="w-full p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black font-mono text-sm"
                   value={sellerAddress}
-                  onChange={(e) => setSellerAddress(e.target.value)}
+                  onChange={(e) => setSellerAddress(e.target.value.trim())}
                 />
+                {sellerAddress && !isAddress(sellerAddress) && (
+                  <p className="text-xs text-red-500 mt-1">Invalid address format.</p>
+                )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Settlement Amount (Test ETH)</label>
-                <input 
-                  type="number" 
+                <label className="block text-sm font-medium text-slate-700 mb-1">Settlement Amount (ETH)</label>
+                <input
+                  type="number"
                   step="0.01"
-                  placeholder="e.g. 1.5" 
+                  min="0"
+                  placeholder="e.g. 1.5"
                   className="w-full p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black"
                   value={settlementAmount}
                   onChange={(e) => setSettlementAmount(e.target.value)}
                 />
               </div>
 
-              <button 
-                type="submit" 
-                disabled={isPending ||!documentHash}
-                className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-md transition-colors disabled:bg-slate-400"
+              {validationError && (
+                <div className="p-3 bg-red-50 text-red-700 rounded-md border border-red-200 text-sm">
+                  {validationError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isPending || !documentHash}
+                className="mt-2 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-md transition-colors disabled:bg-slate-400"
               >
-                {isPending? 'Confirming in Wallet...' : 'Deploy Smart Contract'}
+                {isPending ? 'Confirming in Wallet...' : 'Deploy Smart Contract'}
               </button>
 
               {isSuccess && (
-                <div className="mt-4 p-4 bg-green-100 text-green-800 rounded-md border border-green-300">
-                  <p className="font-semibold">Success! Contract Deployed.</p>
-                  <p className="text-xs break-all mt-1">Transaction Hash: {hash}</p>
+                <div className="mt-2 p-4 bg-green-100 text-green-800 rounded-md border border-green-300">
+                  <p className="font-semibold">Contract deployed successfully.</p>
+                  <p className="text-xs break-all mt-1 font-mono">Transaction Hash: {hash}</p>
+                </div>
+              )}
+
+              {isError && (
+                <div className="mt-2 p-4 bg-red-100 text-red-800 rounded-md border border-red-300">
+                  <p className="font-semibold">Transaction failed.</p>
+                  <p className="text-xs break-all mt-1 font-mono">{error?.message}</p>
                 </div>
               )}
             </form>
