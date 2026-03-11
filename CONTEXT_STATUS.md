@@ -53,8 +53,8 @@ ABIs exported to: `legal-escrow-dapp/src/contracts/abis.ts`
 | Day | Task | Status |
 |-----|------|--------|
 | 15–16 | Connect all UI buttons to contract functions | Done |
-| 17    | Lawyer dashboard read view + `remixd` sync (optional) | **In Progress** |
-| 18–19 | End-to-end settlement simulation | Pending |
+| 17    | Lawyer dashboard read view + `remixd` sync (optional) | Done |
+| 18–19 | End-to-end settlement simulation | **In Progress** |
 | 20–21 | UI polish, loading states, error handling, network guards | Pending |
 
 ---
@@ -92,7 +92,9 @@ legal-escrow-dapp/
 ├── src/
 │   ├── app/
 │   │   ├── layout.tsx              Root layout — Web3Provider wrapper
-│   │   ├── page.tsx                Main dashboard — case creation form
+│   │   ├── page.tsx                Main dashboard — case creation + settlement flow
+│   │   ├── dashboard/
+│   │   │   └── page.tsx            Lawyer dashboard — all cases read view
 │   │   └── globals.css
 │   ├── components/
 │   │   ├── Web3Provider.tsx        Wagmi + RainbowKit + TanStack Query config
@@ -205,7 +207,7 @@ useReadContract()                 // read escrow/ledger/factory state
 - [x] Build `fund()` UI — client deposit page
 - [x] Build `approveRelease()` UI — per-party approval with live approval count
 - [x] Wire CPRA ledger: `registerCase` → `recordDeposit` → `recordDisbursement` → `closeCase`
-- [ ] Build lawyer dashboard read view — list all cases with status
+- [x] Build lawyer dashboard read view — list all cases with status
 - [ ] End-to-end settlement simulation (Days 18–19)
 - [ ] Loading states + tx success/failure toasts
 - [ ] Wrong-network guard (enforce Sepolia)
@@ -224,3 +226,4 @@ useReadContract()                 // read escrow/ledger/factory state
 | 2026-03-11 | Completed Days 15–16 core wiring in `page.tsx`: `parseEventLogs` extracts escrow address from `EscrowCreated` receipt, `fund()` deposit section (Step 3), `approveRelease()` with live dot-progress indicator and per-wallet approval guard (Step 4), settlement complete screen (Step 5). Separate `useWriteContract` and `useWaitForTransactionReceipt` hooks for factory vs escrow. All escrow state refetches on tx confirmation. |
 | 2026-03-11 | Wired CPRA Ledger (Step 6) in `page.tsx`: 3rd `useWriteContract`/`useWaitForTransactionReceipt` for ledger txns; `lawFirmAdmin` read + `isAdmin` guard; deterministic `caseId = keccak256(escrowAddress)`; `casePurpose` form field; `ledgerDone` step-tracking state advanced by `useEffect` after each confirmed ledger tx; `LedgerStepRow` inline component; 4-step sequential UI (Register → Deposit → Disbursement → Close) with amber admin warning banner. Fixed TypeScript `unknown` → `ReactNode` error by casting all `useReadContract` data to explicit types. |
 | 2026-03-11 | Fixed `Web3Provider.tsx`: added explicit `transports` to `getDefaultConfig` — `hardhat` chain now uses `http('http://127.0.0.1:8545')`, `sepolia` uses `http()`. Without this, wagmi polled WalletConnect's cloud RPC for receipts instead of localhost, causing `useWaitForTransactionReceipt` to never resolve on Hardhat. |
+| 2026-03-11 | Built lawyer dashboard at `/dashboard` (`src/app/dashboard/page.tsx`): reads all escrow addresses via `factory.getDeployedEscrows()`, batch-reads state for each via `useReadContracts` (buyer, seller, settlementAmount, isFunded, isReleased, approvalCount), displays per-case cards with StatusBadge. Added "View All Cases →" link to main page header. Full end-to-end settlement flow confirmed working on Hardhat local. |

@@ -2,6 +2,7 @@
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { RicardianUploader } from '../components/RicardianUploader';
+import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import {
   useAccount,
@@ -238,8 +239,14 @@ export default function Home() {
         {/* Header */}
         <div className="text-center">
           <h1 className="text-3xl font-bold mb-3 text-slate-800">Legal Escrow Dashboard</h1>
-          <p className="text-slate-500 mb-8">Secure, automated, and CPRA-compliant settlement architecture.</p>
-          <div className="flex justify-center mb-8"><ConnectButton /></div>
+          <p className="text-slate-500 mb-4">Secure, automated, and CPRA-compliant settlement architecture.</p>
+          <div className="flex justify-center mb-4"><ConnectButton /></div>
+          <Link
+            href="/dashboard"
+            className="inline-block text-sm text-blue-600 hover:text-blue-800 border border-blue-200 px-3 py-1.5 rounded-md transition-colors mb-4"
+          >
+            View All Cases →
+          </Link>
         </div>
 
         <hr className="border-slate-200 mb-8" />
