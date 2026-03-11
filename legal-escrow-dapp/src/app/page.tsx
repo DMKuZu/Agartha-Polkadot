@@ -9,9 +9,15 @@ import {
   useWriteContract,
   useWaitForTransactionReceipt,
   useReadContract,
+  useChainId,
+  useSwitchChain,
 } from 'wagmi';
-import { parseEther, isAddress, parseEventLogs, keccak256 } from 'viem';
+import { parseEther, formatEther, isAddress, parseEventLogs, keccak256 } from 'viem';
 import { FACTORY_ADDRESS, FACTORY_ABI, ESCROW_ABI, LEDGER_ADDRESS, LEDGER_ABI } from '../contracts/abis';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type ToastEntry = { id: number; message: string; type: 'success' | 'error' };
 
 export default function Home() {
   const { address, isConnected } = useAccount();
@@ -86,6 +92,7 @@ export default function Home() {
     if (logs.length > 0) {
       const escrowAddr = (logs[0] as any).args.escrowAddress as `0x${string}`;
       setDeployedEscrowAddress(escrowAddr);
+      showToast('Contract deployed successfully');
     }
   }, [factoryReceipt]);
 
@@ -124,11 +131,34 @@ export default function Home() {
   const lawFirmAdmin = lawFirmAdminRaw as `0x${string}` | undefined;
   const isAdmin = !!(address && lawFirmAdmin && address.toLowerCase() === lawFirmAdmin.toLowerCase());
 
+  // ── Network guard ─────────────────────────────────────────────────────────────
+
+  const chainId = useChainId();
+  const { switchChain } = useSwitchChain();
+  const ALLOWED_CHAINS = [31337, 11155111]; // hardhat, sepolia
+  const isWrongNetwork = isConnected && !ALLOWED_CHAINS.includes(chainId);
+
+  // ── Toast system ──────────────────────────────────────────────────────────────
+
+  const [toasts, setToasts] = useState<ToastEntry[]>([]);
+
+  const showToast = (message: string, type: ToastEntry['type'] = 'success') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+  };
+
+  // Error toasts
+  useEffect(() => { if (isFactoryError) showToast('Deploy transaction failed', 'error'); }, [isFactoryError]);
+  useEffect(() => { if (isEscrowError)  showToast('Transaction failed', 'error');         }, [isEscrowError]);
+  useEffect(() => { if (isLedgerError)  showToast('Ledger write failed', 'error');        }, [isLedgerError]);
+
   // ── Refetch escrow state after escrow tx ─────────────────────────────────────
 
   useEffect(() => {
     if (!isEscrowTxConfirmed) return;
     refetchFunded(); refetchApprovals(); refetchReleased(); refetchApproved();
+    showToast('Transaction confirmed');
   }, [isEscrowTxConfirmed]);
 
   // ── Advance ledger step tracking after each ledger tx ────────────────────────
@@ -142,6 +172,7 @@ export default function Home() {
       disbursementRecorded: prev.disbursementRecorded  || currentLedgerStep === 'disburse',
       closed:               prev.closed                || currentLedgerStep === 'close',
     }));
+    showToast('Ledger entry recorded');
   }, [isLedgerTxConfirmed]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -250,6 +281,30 @@ export default function Home() {
         </div>
 
         <hr className="border-slate-200 mb-8" />
+
+        {/* Wrong-network guard */}
+        {isWrongNetwork && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-300 rounded-lg text-center">
+            <p className="text-sm font-semibold text-red-800 mb-1">Wrong Network</p>
+            <p className="text-xs text-red-600 mb-3">
+              Please switch to Hardhat Local (31337) or Sepolia (11155111).
+            </p>
+            <div className="flex justify-center gap-2">
+              <button
+                onClick={() => switchChain({ chainId: 31337 })}
+                className="text-xs font-semibold bg-red-700 hover:bg-red-800 text-white px-3 py-1.5 rounded transition-colors"
+              >
+                Switch to Hardhat
+              </button>
+              <button
+                onClick={() => switchChain({ chainId: 11155111 })}
+                className="text-xs font-semibold bg-red-700 hover:bg-red-800 text-white px-3 py-1.5 rounded transition-colors"
+              >
+                Switch to Sepolia
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Step 1: Upload PDF */}
         <RicardianUploader onHashGenerated={setDocumentHash} />
@@ -466,6 +521,20 @@ export default function Home() {
           </div>
         )}
 
+      </div>
+
+      {/* Toast notifications */}
+      <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50 pointer-events-none">
+        {toasts.map(t => (
+          <div
+            key={t.id}
+            className={`px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white transition-all ${
+              t.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+            }`}
+          >
+            {t.message}
+          </div>
+        ))}
       </div>
     </main>
   );
