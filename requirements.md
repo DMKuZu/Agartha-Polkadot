@@ -1,6 +1,6 @@
 # Requirements
 
-All library versions required to run the Agartha Legal Escrow dApp.
+All library versions required to run the AgarthaTech Legal Escrow dApp.
 
 ---
 
@@ -11,6 +11,39 @@ All library versions required to run the Agartha Legal Escrow dApp.
 | Node.js | v22.21.1 |
 | npm | 10.9.4 |
 | Solidity | 0.8.28 |
+
+---
+
+## Network Configuration
+
+### Hardhat Local (development)
+
+| Field | Value |
+|-------|-------|
+| Network Name | Hardhat Local |
+| RPC URL | `http://127.0.0.1:8545` |
+| Chain ID | `31337` |
+| Currency Symbol | `ETH` |
+
+### Sepolia Testnet (Ethereum)
+
+| Field | Value |
+|-------|-------|
+| Network Name | Sepolia |
+| Chain ID | `11155111` |
+| Currency Symbol | `ETH` |
+
+### Polkadot Paseo Testnet (target production network)
+
+| Field | Value |
+|-------|-------|
+| Network Name | Polkadot EVM Testnet |
+| RPC URL | `https://eth-rpc-testnet.polkadot.io/` |
+| Chain ID | `420420417` |
+| Currency Symbol | `PAS` |
+| Block Explorer | `https://blockscout-testnet.polkadot.io` |
+
+> Add the Paseo network to MetaMask manually using the values above.
 
 ---
 

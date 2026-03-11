@@ -91,7 +91,7 @@ export default function Dashboard() {
         {/* Header */}
         <div className="flex items-start justify-between mb-6 gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">Lawyer Dashboard</h1>
+            <h1 className="text-2xl font-bold text-slate-800">Case Dashboard</h1>
             <p className="text-sm text-slate-500 mt-1">
               All cases deployed through this factory — live on-chain state.
             </p>
@@ -174,18 +174,18 @@ export default function Dashboard() {
                   {/* Case fields */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
                     <div>
-                      <p className="text-xs text-slate-500 mb-0.5">Buyer</p>
+                      <p className="text-xs text-slate-500 mb-0.5">Client</p>
                       <p className="font-mono text-slate-700 break-all text-xs">{c.buyer ?? '—'}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-slate-500 mb-0.5">Seller</p>
+                      <p className="text-xs text-slate-500 mb-0.5">Freelancer</p>
                       <p className="font-mono text-slate-700 break-all text-xs">{c.seller ?? '—'}</p>
                     </div>
                     <div>
                       <p className="text-xs text-slate-500 mb-0.5">Settlement Amount</p>
                       <p className="font-semibold text-slate-800">
                         {c.settlementAmount !== undefined
-                          ? `${formatEther(c.settlementAmount)} ETH`
+                          ? `${formatEther(c.settlementAmount)} PAS`
                           : '—'}
                       </p>
                     </div>

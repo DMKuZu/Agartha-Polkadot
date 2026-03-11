@@ -4,11 +4,11 @@
 
 ---
 
-## Current Status: Day 17 of 21
+## Current Status: Day 18 of 21
 
-**Phase:** Lawyer Dashboard + Polish
+**Phase:** PRD Alignment — Role-based UX + Ricardian Generator + Paseo Network
 
-All core UI-to-contract bindings are complete. The full settlement flow (deploy → fund → approve → release) and CPRA ledger (register → deposit → disbursement → close) are wired in `page.tsx`. Next focus: lawyer dashboard read view (list all cases), then polish (toasts, network guard, ETH formatting).
+Full settlement flow confirmed working on Hardhat local (Day 17). Now restructuring the app to match the PRD: role-differentiated pages (Client / Freelancer / Arbiter), onboarding/role-selection landing, Ricardian template generator replacing the PDF uploader, and Polkadot Paseo Testnet network support.
 
 ---
 
@@ -48,40 +48,29 @@ ABIs exported to: `legal-escrow-dapp/src/contracts/abis.ts`
 
 ---
 
-### Week 3 — System Assembly, Syncing, and Polish `[IN PROGRESS]`
+### Week 3 — System Assembly, Syncing, and Polish `[COMPLETE]`
 
 | Day | Task | Status |
 |-----|------|--------|
 | 15–16 | Connect all UI buttons to contract functions | Done |
-| 17    | Lawyer dashboard read view + `remixd` sync (optional) | Done |
-| 18–19 | End-to-end settlement simulation | **In Progress** |
-| 20–21 | UI polish, loading states, error handling, network guards | Pending |
+| 17    | Lawyer dashboard read view + polish | Done |
+| 18–19 | End-to-end settlement simulation | Done — confirmed working |
+| 20–21 | UI polish, loading states, error handling, network guards | Done |
 
 ---
 
-## Days 15–16 — Remaining Work (Current Focus)
+### Week 4 — PRD Alignment `[IN PROGRESS]`
 
-The factory `createCase()` call is already wired. The following flows still need UI-to-contract bindings:
-
-### 1. Client Deposit Page
-- Route needed: `/deposit` or dedicated dashboard section
-- Must call `escrow.fund()` (payable) using the escrow address returned by `createCase()`
-- New escrow address must be extracted via `useWaitForTransactionReceipt` + log parsing on `EscrowCreated` event
-
-### 2. Multi-Sig Approval Flow
-- UI needed for each party (buyer, seller, lawyer) to call `escrow.approveRelease()`
-- Must show current `approvalCount` and whether the connected wallet `hasApproved`
-- Funds auto-release to seller when `approvalCount >= 2`
-
-### 3. CPRA Ledger Writes
-- After `createCase()` → call `ledger.registerCase(bytes32 caseId, clientAddr, escrowAddr, purpose)`
-- After `fund()` succeeds → call `ledger.recordDeposit()`
-- After funds released → call `ledger.recordDisbursement()` then `ledger.closeCase()`
-
-### 4. Lawyer Dashboard — Read State
-- Display all deployed escrows via `factory.getDeployedEscrows()`
-- Per escrow: read `buyer`, `seller`, `settlementAmount`, `documentHash`, `isFunded`, `isReleased`, `approvalCount`
-- Display total case count via `ledger.getTotalCases()`
+| Phase | Task | Status |
+|-------|------|--------|
+| 1 | Network config: add Paseo Testnet to Web3Provider + ETH→PAS labels | In Progress |
+| 1 | Terminology rename: Buyer→Client, Seller→Freelancer, Lawyer→Arbiter | Pending |
+| 2 | Onboarding page (`/`) — connect wallet + role selector (Client / Freelancer / Arbiter) | Pending |
+| 2 | Role routing: `/client`, `/freelancer`, `/arbiter` pages + `RoleGuard` component | Pending |
+| 3 | `RicardianGenerator.tsx` — Philippine FSA template form → auto-hash (replaces PDF uploader) | Pending |
+| 4 | Client page (`/client`) — create deal → submit for Arbiter review → fund → approve | Pending |
+| 5 | Freelancer page (`/freelancer`) — view contracts → approve release → settlement received | Pending |
+| 6 | Arbiter page (`/arbiter`) — pending deals queue + review + deploy + CPRA ledger | Pending |
 
 ---
 
@@ -91,28 +80,45 @@ The factory `createCase()` call is already wired. The following flows still need
 legal-escrow-dapp/
 ├── src/
 │   ├── app/
-│   │   ├── layout.tsx              Root layout — Web3Provider wrapper
-│   │   ├── page.tsx                Main dashboard — case creation + settlement flow
+│   │   ├── layout.tsx                Root layout — Web3Provider wrapper
+│   │   ├── page.tsx                  Onboarding — wallet connect + role selector
+│   │   ├── arbiter/
+│   │   │   └── page.tsx              Arbiter workflow — pending review queue, deploy, CPRA ledger
+│   │   ├── client/
+│   │   │   └── page.tsx              Client workflow — create deal, fund escrow, approve
+│   │   ├── freelancer/
+│   │   │   └── page.tsx              Freelancer workflow — view contracts, approve release
 │   │   ├── dashboard/
-│   │   │   └── page.tsx            Lawyer dashboard — all cases read view
+│   │   │   └── page.tsx              Shared read-only all-cases view (all roles)
 │   │   └── globals.css
 │   ├── components/
-│   │   ├── Web3Provider.tsx        Wagmi + RainbowKit + TanStack Query config
-│   │   └── RicardianUploader.tsx   PDF → SHA256 hash
+│   │   ├── Web3Provider.tsx          Wagmi + RainbowKit + TanStack Query config (Hardhat + Sepolia + Paseo)
+│   │   ├── RoleGuard.tsx             localStorage role guard — redirects unauthenticated users to onboarding
+│   │   └── RicardianGenerator.tsx    Philippine FSA template form → rendered doc → SHA256 hash
 │   └── contracts/
-│       └── abis.ts                 All ABIs + deployed addresses
+│       └── abis.ts                   All ABIs + deployed addresses
 
 backend/
 ├── contracts/
-│   ├── LegalEscrow.sol             2-of-3 multi-sig escrow + Ricardian hash
-│   ├── LegalFactory.sol            Factory — deploys one LegalEscrow per case
-│   ├── CPRALedger.sol              On-chain audit trail for CPRA compliance
-│   └── Lock.sol                    Hardhat boilerplate (unused)
+│   ├── LegalEscrow.sol               2-of-3 multi-sig escrow + Ricardian hash
+│   ├── LegalFactory.sol              Factory — deploys one LegalEscrow per case
+│   ├── CPRALedger.sol                On-chain audit trail for CPRA compliance
+│   └── Lock.sol                      Hardhat boilerplate (unused)
 ├── scripts/
-│   └── deploy.js                   Deploys Factory + Ledger; auto-writes .env.local to frontend
-├── hardhat.config.js               Solidity 0.8.28 + localhost network (chainId 31337)
+│   └── deploy.js                     Deploys Factory + Ledger; auto-writes .env.local to frontend
+├── hardhat.config.js                 Solidity 0.8.28 + localhost network (chainId 31337)
 └── test/
 ```
+
+---
+
+## localStorage Keys (Role Coordination — No Backend)
+
+| Key | Written by | Read by | Content |
+|-----|-----------|---------|---------|
+| `agartha_role` | Onboarding page | RoleGuard, all pages | `'client' \| 'freelancer' \| 'arbiter'` |
+| `agartha_pending_deals` | Client page | Arbiter page | `Array<{ id, clientAddress, freelancerAddress, amount, documentHash, title, deliverables, deadline }>` |
+| `agartha_escrow_map` | Arbiter page (after deploy) | Client page | `Record<dealId, escrowAddress>` |
 
 ---
 
@@ -141,7 +147,7 @@ npm run dev
 ```
 
 ### Import test wallets into MetaMask
-`npx hardhat node` prints 20 accounts with private keys. Import **3 separate accounts** (one each for buyer, seller, lawyer) using their private keys via MetaMask → Import Account.
+`npx hardhat node` prints 20 accounts with private keys. Import **3 separate accounts** (one each for Client, Freelancer, Arbiter) using their private keys via MetaMask → Import Account.
 
 ### Contract address resolution
 `abis.ts` reads `NEXT_PUBLIC_FACTORY_ADDRESS` and `NEXT_PUBLIC_LEDGER_ADDRESS` from `.env.local` first. Falls back to the Sepolia addresses if those vars are absent. No manual address editing needed after running the deploy script.
@@ -166,7 +172,7 @@ Do this once per `npx hardhat node` session before submitting any transactions.
 | Wallet UI | RainbowKit 2 |
 | Data Fetching | TanStack React Query 5 |
 | Document Hashing | crypto-js (browser-side SHA256) |
-| Network | Hardhat localhost (chainId 31337) + Sepolia testnet |
+| Network | Hardhat localhost (31337) + Sepolia testnet + Polkadot EVM Testnet (420420417) |
 
 ---
 
@@ -174,7 +180,7 @@ Do this once per `npx hardhat node` session before submitting any transactions.
 
 ### LegalEscrow.sol
 - State: `buyer`, `seller`, `lawyer`, `settlementAmount`, `documentHash`, `isFunded`, `isReleased`, `approvalCount`, `hasApproved(address)`
-- `fund()` — buyer deposits exact settlement amount (payable)
+- `fund()` — buyer (Client) deposits exact settlement amount (payable)
 - `approveRelease()` — any party approves; auto-releases funds at 2/3
 - `onlyParties` modifier restricts all calls
 
@@ -197,21 +203,38 @@ useAccount()                      // connected wallet address + isConnected
 useWriteContract()                // send txns: createCase, fund, approveRelease
 useWaitForTransactionReceipt()    // parse EscrowCreated log to get new escrow address
 useReadContract()                 // read escrow/ledger/factory state
+useReadContracts()                // batch read multiple escrow fields
+useChainId()                      // current chain
+useSwitchChain()                  // network guard
 ```
 
 ---
 
-## Week 3 Checklist
+## Week 3 Checklist `[ALL DONE]`
 
 - [x] Parse `EscrowCreated` log to extract deployed escrow address after `createCase()`
 - [x] Build `fund()` UI — client deposit page
 - [x] Build `approveRelease()` UI — per-party approval with live approval count
 - [x] Wire CPRA ledger: `registerCase` → `recordDeposit` → `recordDisbursement` → `closeCase`
 - [x] Build lawyer dashboard read view — list all cases with status
-- [ ] End-to-end settlement simulation (Days 18–19)
+- [x] End-to-end settlement simulation — confirmed working
 - [x] Loading states + tx success/failure toasts
 - [x] Wrong-network guard (enforce Sepolia or Hardhat)
 - [x] Display ETH amounts in readable fiat-friendly format
+
+## Week 4 Checklist `[COMPLETE]`
+
+- [x] Add Paseo Testnet chain to Web3Provider (chain ID 420420417, Polkadot EVM Testnet)
+- [x] Rename Buyer→Client, Seller→Freelancer, Lawyer→Arbiter in UI labels
+- [x] Update ETH→PAS currency label in UI
+- [x] Build onboarding/role-selector landing page (`/`)
+- [x] Build `RoleGuard` component
+- [x] Build `RicardianGenerator` component (Philippine FSA template → hash)
+- [x] Delete `RicardianUploader` component (replaced)
+- [x] Build Client page (`/client`)
+- [x] Build Freelancer page (`/freelancer`)
+- [x] Build Arbiter page (`/arbiter`) with pending deals queue
+- [x] Update `README.md` with new role-based flow
 
 ---
 
@@ -228,3 +251,5 @@ useReadContract()                 // read escrow/ledger/factory state
 | 2026-03-11 | Fixed `Web3Provider.tsx`: added explicit `transports` to `getDefaultConfig` — `hardhat` chain now uses `http('http://127.0.0.1:8545')`, `sepolia` uses `http()`. Without this, wagmi polled WalletConnect's cloud RPC for receipts instead of localhost, causing `useWaitForTransactionReceipt` to never resolve on Hardhat. |
 | 2026-03-11 | Built lawyer dashboard at `/dashboard` (`src/app/dashboard/page.tsx`): reads all escrow addresses via `factory.getDeployedEscrows()`, batch-reads state for each via `useReadContracts` (buyer, seller, settlementAmount, isFunded, isReleased, approvalCount), displays per-case cards with StatusBadge. Added "View All Cases →" link to main page header. Full end-to-end settlement flow confirmed working on Hardhat local. |
 | 2026-03-12 | Polish complete in `page.tsx`: wrong-network guard banner (switchChain to Hardhat/Sepolia), fixed bottom-right toast stack (success = green, error = red, 3.5 s auto-dismiss), `formatEther` for ETH display, `useChainId`/`useSwitchChain` network guard hooks. All three polish checklist items ticked. |
+| 2026-03-12 | PRD alignment sprint started (Week 4). Gap analysis complete. Pipeline: Phase 1 (network + terminology) → Phase 2 (onboarding + role routing) → Phase 3 (Ricardian generator) → Phase 4–6 (Client / Freelancer / Arbiter pages). localStorage used for cross-role state coordination (no backend). |
+| 2026-03-12 | Week 4 PRD alignment complete. All phases done: terminology rename (ETH→PAS, Buyer→Client, Seller→Freelancer, Lawyer→Arbiter), onboarding role-selector page, RoleGuard, RicardianGenerator (Philippine FSA template + SHA256), Client/Freelancer/Arbiter role pages, pending deals queue in Arbiter. Polkadot EVM Testnet added to Web3Provider (chain ID 420420417, RPC https://eth-rpc-testnet.polkadot.io/, PAS currency). |
