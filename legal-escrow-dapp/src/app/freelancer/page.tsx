@@ -56,6 +56,7 @@ export default function FreelancerPage() {
   const contractReads = allEscrows.flatMap((addr) => [
     { address: addr, abi: ESCROW_ABI, functionName: 'seller' },
     { address: addr, abi: ESCROW_ABI, functionName: 'buyer' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'lawyer' },
     { address: addr, abi: ESCROW_ABI, functionName: 'settlementAmount' },
     { address: addr, abi: ESCROW_ABI, functionName: 'isFunded' },
     { address: addr, abi: ESCROW_ABI, functionName: 'isReleased' },
@@ -72,16 +73,17 @@ export default function FreelancerPage() {
 
   const myContracts = allEscrows
     .map((addr, i) => {
-      const base = i * 7;
+      const base = i * 8;
       return {
         address: addr,
         seller:           stateData?.[base + 0]?.result as `0x${string}` | undefined,
         buyer:            stateData?.[base + 1]?.result as `0x${string}` | undefined,
-        settlementAmount: stateData?.[base + 2]?.result as bigint | undefined,
-        isFunded:         stateData?.[base + 3]?.result as boolean | undefined,
-        isReleased:       stateData?.[base + 4]?.result as boolean | undefined,
-        approvalCount:    stateData?.[base + 5]?.result as bigint | undefined,
-        hasApproved:      stateData?.[base + 6]?.result as boolean | undefined,
+        lawyer:           stateData?.[base + 2]?.result as `0x${string}` | undefined,
+        settlementAmount: stateData?.[base + 3]?.result as bigint | undefined,
+        isFunded:         stateData?.[base + 4]?.result as boolean | undefined,
+        isReleased:       stateData?.[base + 5]?.result as boolean | undefined,
+        approvalCount:    stateData?.[base + 6]?.result as bigint | undefined,
+        hasApproved:      stateData?.[base + 7]?.result as boolean | undefined,
       };
     })
     .filter((c) => c.seller?.toLowerCase() === address?.toLowerCase());
@@ -192,6 +194,10 @@ export default function FreelancerPage() {
                       <div>
                         <p className="text-xs text-slate-500 mb-0.5">Client</p>
                         <p className="font-mono text-slate-700 break-all text-xs">{c.buyer ?? '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 mb-0.5">Arbiter</p>
+                        <p className="font-mono text-slate-700 break-all text-xs">{c.lawyer ?? '—'}</p>
                       </div>
                       <div>
                         <p className="text-xs text-slate-500 mb-0.5">Settlement Amount</p>

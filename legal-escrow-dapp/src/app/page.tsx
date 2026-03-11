@@ -1,6 +1,7 @@
 'use client';
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAccount } from 'wagmi';
 

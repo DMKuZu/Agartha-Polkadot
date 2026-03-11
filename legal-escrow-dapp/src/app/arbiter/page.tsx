@@ -8,6 +8,7 @@ import {
   useWriteContract,
   useWaitForTransactionReceipt,
   useReadContract,
+  useReadContracts,
   useChainId,
   useSwitchChain,
 } from 'wagmi';
@@ -18,13 +19,38 @@ import { RoleGuard } from '../../components/RoleGuard';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type ToastEntry = { id: number; message: string; type: 'success' | 'error' };
+type LedgerStep = 'register' | 'deposit' | 'disburse' | 'close';
+type LedgerDone = { registered: boolean; depositRecorded: boolean; disbursementRecorded: boolean; closed: boolean };
+
+interface MyCaseItem {
+  address: `0x${string}`;
+  buyer:   `0x${string}` | undefined;
+  seller:  `0x${string}` | undefined;
+  settlementAmount: bigint | undefined;
+  isFunded:      boolean | undefined;
+  isReleased:    boolean | undefined;
+  approvalCount: bigint  | undefined;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const LEDGER_KEY = (addr: string) => `agartha_ledger_${addr.toLowerCase()}`;
+const BLANK_LEDGER: LedgerDone = { registered: false, depositRecorded: false, disbursementRecorded: false, closed: false };
+
+function loadLedgerProgress(addr: string): LedgerDone {
+  try {
+    const saved = localStorage.getItem(LEDGER_KEY(addr));
+    return saved ? JSON.parse(saved) : BLANK_LEDGER;
+  } catch {
+    return BLANK_LEDGER;
+  }
+}
 
 export default function ArbiterPage() {
   const { address, isConnected } = useAccount();
 
   // ── Write hooks ───────────────────────────────────────────────────────────────
 
-  // Factory: createCase
   const {
     writeContract: writeFactory,
     isPending: isFactoryPending,
@@ -33,7 +59,6 @@ export default function ArbiterPage() {
     data: factoryTxHash,
   } = useWriteContract();
 
-  // Escrow: fund + approveRelease
   const {
     writeContract: writeEscrow,
     isPending: isEscrowPending,
@@ -42,7 +67,6 @@ export default function ArbiterPage() {
     data: escrowTxHash,
   } = useWriteContract();
 
-  // Ledger: registerCase, recordDeposit, recordDisbursement, closeCase
   const {
     writeContract: writeLedger,
     isPending: isLedgerPending,
@@ -54,35 +78,90 @@ export default function ArbiterPage() {
   // ── Receipt watchers ─────────────────────────────────────────────────────────
 
   const { data: factoryReceipt } = useWaitForTransactionReceipt({ hash: factoryTxHash });
-  const { isSuccess: isEscrowTxConfirmed }  = useWaitForTransactionReceipt({ hash: escrowTxHash });
-  const { isSuccess: isLedgerTxConfirmed }  = useWaitForTransactionReceipt({ hash: ledgerTxHash });
+  const { isSuccess: isEscrowTxConfirmed } = useWaitForTransactionReceipt({ hash: escrowTxHash });
+  const { isSuccess: isLedgerTxConfirmed } = useWaitForTransactionReceipt({ hash: ledgerTxHash });
 
   // ── Form state ───────────────────────────────────────────────────────────────
 
-  const [documentHash,    setDocumentHash]    = useState<string>('');
-  const [buyerAddress,    setBuyerAddress]    = useState<string>('');
-  const [sellerAddress,   setSellerAddress]   = useState<string>('');
-  const [settlementAmount,setSettlementAmount]= useState<string>('');
-  const [casePurpose,     setCasePurpose]     = useState<string>('');
-  const [validationError, setValidationError] = useState<string>('');
+  const [documentHash,     setDocumentHash]     = useState<string>('');
+  const [buyerAddress,     setBuyerAddress]     = useState<string>('');
+  const [sellerAddress,    setSellerAddress]    = useState<string>('');
+  const [settlementAmount, setSettlementAmount] = useState<string>('');
+  const [casePurpose,      setCasePurpose]      = useState<string>('');
+  const [validationError,  setValidationError]  = useState<string>('');
 
-  // ── Derived contract state ───────────────────────────────────────────────────
+  // ── Active escrow ─────────────────────────────────────────────────────────────
 
   const [deployedEscrowAddress, setDeployedEscrowAddress] = useState<`0x${string}` | null>(null);
 
-  // Deterministic caseId for the ledger — keccak256 of the escrow address
   const caseId = deployedEscrowAddress ? keccak256(deployedEscrowAddress) : null;
 
-  // ── CPRA ledger step tracking (local — persists for this session) ────────────
+  // ── CPRA ledger step tracking (persisted per escrow in localStorage) ──────────
 
-  type LedgerStep = 'register' | 'deposit' | 'disburse' | 'close';
   const [currentLedgerStep, setCurrentLedgerStep] = useState<LedgerStep | null>(null);
-  const [ledgerDone, setLedgerDone] = useState({
-    registered:          false,
-    depositRecorded:     false,
-    disbursementRecorded:false,
-    closed:              false,
+  const [ledgerDone, setLedgerDone] = useState<LedgerDone>(BLANK_LEDGER);
+
+  useEffect(() => {
+    if (!deployedEscrowAddress) return;
+    localStorage.setItem(LEDGER_KEY(deployedEscrowAddress), JSON.stringify(ledgerDone));
+  }, [ledgerDone, deployedEscrowAddress]);
+
+  // ── All cases from factory (on-chain) ─────────────────────────────────────────
+
+  const {
+    data: allEscrowsRaw,
+    isLoading: allEscrowsLoading,
+    refetch: refetchAllEscrows,
+  } = useReadContract({
+    address: FACTORY_ADDRESS,
+    abi: FACTORY_ABI,
+    functionName: 'getDeployedEscrows',
+    query: { enabled: !!address },
   });
+
+  const allEscrows = (allEscrowsRaw ?? []) as `0x${string}`[];
+
+  const allCasesReads = allEscrows.flatMap((addr) => [
+    { address: addr, abi: ESCROW_ABI, functionName: 'lawyer' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'buyer' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'seller' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'settlementAmount' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'isFunded' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'isReleased' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'approvalCount' },
+  ]);
+
+  const { data: allCasesData, refetch: refetchAllCases } = useReadContracts({
+    contracts: allCasesReads as any,
+    query: { enabled: allEscrows.length > 0 && !!address },
+  });
+
+  const myCases: MyCaseItem[] = allEscrows
+    .map((addr, i) => {
+      const base = i * 7;
+      return {
+        address: addr,
+        lawyer:           allCasesData?.[base + 0]?.result as `0x${string}` | undefined,
+        buyer:            allCasesData?.[base + 1]?.result as `0x${string}` | undefined,
+        seller:           allCasesData?.[base + 2]?.result as `0x${string}` | undefined,
+        settlementAmount: allCasesData?.[base + 3]?.result as bigint | undefined,
+        isFunded:         allCasesData?.[base + 4]?.result as boolean | undefined,
+        isReleased:       allCasesData?.[base + 5]?.result as boolean | undefined,
+        approvalCount:    allCasesData?.[base + 6]?.result as bigint | undefined,
+      };
+    })
+    .filter((c) => c.lawyer?.toLowerCase() === address?.toLowerCase());
+
+  // ── Load a case from on-chain history ─────────────────────────────────────────
+
+  const loadCase = (c: MyCaseItem) => {
+    setDeployedEscrowAddress(c.address);
+    setBuyerAddress(c.buyer ?? '');
+    setSellerAddress(c.seller ?? '');
+    setSettlementAmount(c.settlementAmount !== undefined ? formatEther(c.settlementAmount) : '');
+    setLedgerDone(loadLedgerProgress(c.address));
+    setCurrentLedgerStep(null);
+  };
 
   // ── Parse EscrowCreated log when factory receipt arrives ─────────────────────
 
@@ -92,35 +171,37 @@ export default function ArbiterPage() {
     if (logs.length > 0) {
       const escrowAddr = (logs[0] as any).args.escrowAddress as `0x${string}`;
       setDeployedEscrowAddress(escrowAddr);
-      // Save escrow address to localStorage so Client can fund it
+      setLedgerDone(BLANK_LEDGER);
       const escrowMap = JSON.parse(localStorage.getItem('agartha_escrow_map') || '{}');
       escrowMap[buyerAddress.toLowerCase()] = escrowAddr;
       localStorage.setItem('agartha_escrow_map', JSON.stringify(escrowMap));
+      refetchAllEscrows();
+      refetchAllCases();
       showToast('Contract deployed successfully');
     }
   }, [factoryReceipt]);
 
-  // ── Read escrow state ────────────────────────────────────────────────────────
+  // ── Read active escrow state ──────────────────────────────────────────────────
 
-  const { data: isFundedRaw,                refetch: refetchFunded    } = useReadContract({
+  const { data: isFundedRaw,                 refetch: refetchFunded    } = useReadContract({
     address: deployedEscrowAddress ?? undefined, abi: ESCROW_ABI, functionName: 'isFunded',
     query: { enabled: !!deployedEscrowAddress },
   });
   const isFunded = isFundedRaw as boolean | undefined;
 
-  const { data: approvalCountRaw,           refetch: refetchApprovals } = useReadContract({
+  const { data: approvalCountRaw,            refetch: refetchApprovals } = useReadContract({
     address: deployedEscrowAddress ?? undefined, abi: ESCROW_ABI, functionName: 'approvalCount',
     query: { enabled: !!deployedEscrowAddress },
   });
   const approvalCount = approvalCountRaw as bigint | undefined;
 
-  const { data: isReleasedRaw,              refetch: refetchReleased  } = useReadContract({
+  const { data: isReleasedRaw,               refetch: refetchReleased  } = useReadContract({
     address: deployedEscrowAddress ?? undefined, abi: ESCROW_ABI, functionName: 'isReleased',
     query: { enabled: !!deployedEscrowAddress },
   });
   const isReleased = isReleasedRaw as boolean | undefined;
 
-  const { data: hasCurrentWalletApprovedRaw,refetch: refetchApproved  } = useReadContract({
+  const { data: hasCurrentWalletApprovedRaw, refetch: refetchApproved  } = useReadContract({
     address: deployedEscrowAddress ?? undefined, abi: ESCROW_ABI, functionName: 'hasApproved',
     args: address ? [address] : undefined,
     query: { enabled: !!deployedEscrowAddress && !!address },
@@ -139,7 +220,7 @@ export default function ArbiterPage() {
 
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
-  const ALLOWED_CHAINS = [31337, 11155111, 420420417]; // hardhat, sepolia, polkadot-evm-testnet
+  const ALLOWED_CHAINS = [31337, 11155111, 420420417];
   const isWrongNetwork = isConnected && !ALLOWED_CHAINS.includes(chainId);
 
   // ── Toast system ──────────────────────────────────────────────────────────────
@@ -152,7 +233,6 @@ export default function ArbiterPage() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
   };
 
-  // Error toasts
   useEffect(() => { if (isFactoryError) showToast('Deploy transaction failed', 'error'); }, [isFactoryError]);
   useEffect(() => { if (isEscrowError)  showToast('Transaction failed', 'error');         }, [isEscrowError]);
   useEffect(() => { if (isLedgerError)  showToast('Ledger write failed', 'error');        }, [isLedgerError]);
@@ -162,6 +242,7 @@ export default function ArbiterPage() {
   useEffect(() => {
     if (!isEscrowTxConfirmed) return;
     refetchFunded(); refetchApprovals(); refetchReleased(); refetchApproved();
+    refetchAllCases();
     showToast('Transaction confirmed');
   }, [isEscrowTxConfirmed]);
 
@@ -195,6 +276,8 @@ export default function ArbiterPage() {
     setSettlementAmount(deal.amount || '');
     setCasePurpose(deal.title || '');
     setDocumentHash(deal.documentHash || '');
+    setDeployedEscrowAddress(null);
+    setLedgerDone(BLANK_LEDGER);
   };
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -202,7 +285,7 @@ export default function ArbiterPage() {
   const handleDeployContract = (e: React.FormEvent) => {
     e.preventDefault();
     setValidationError('');
-    if (!documentHash)    return setValidationError('Please upload and hash a document first.');
+    if (!documentHash)    return setValidationError('Please enter a document hash first.');
     if (!buyerAddress || !sellerAddress || !settlementAmount)
                           return setValidationError('Please fill in all fields.');
     if (!isAddress(buyerAddress))  return setValidationError('Client address is not a valid Ethereum address.');
@@ -221,11 +304,6 @@ export default function ArbiterPage() {
         documentHash,
       ],
     });
-  };
-
-  const handleFund = () => {
-    if (!deployedEscrowAddress || !settlementAmount) return;
-    writeEscrow({ address: deployedEscrowAddress, abi: ESCROW_ABI, functionName: 'fund', value: parseEther(settlementAmount) });
   };
 
   const handleApprove = () => {
@@ -295,17 +373,9 @@ export default function ArbiterPage() {
             <h1 className="text-3xl font-bold mb-3 text-slate-800">Arbiter Portal</h1>
             <p className="text-slate-500 mb-4">Review pending deals, deploy escrow contracts, and manage CPRA compliance.</p>
             <div className="flex justify-center mb-4"><ConnectButton /></div>
-            <div className="flex justify-center gap-3 mb-4">
-              <Link
-                href="/dashboard"
-                className="inline-block text-sm text-blue-600 hover:text-blue-800 border border-blue-200 px-3 py-1.5 rounded-md transition-colors"
-              >
-                View All Cases →
-              </Link>
-              <Link
-                href="/"
-                className="inline-block text-sm text-slate-500 hover:text-slate-700 border border-slate-200 px-3 py-1.5 rounded-md transition-colors"
-              >
+            <div className="flex justify-center mb-4">
+              <Link href="/"
+                className="inline-block text-sm text-slate-500 hover:text-slate-700 border border-slate-200 px-3 py-1.5 rounded-md transition-colors">
                 ← Switch Role
               </Link>
             </div>
@@ -321,25 +391,82 @@ export default function ArbiterPage() {
                 Please switch to Polkadot EVM Testnet (420420417), Hardhat Local (31337), or Sepolia (11155111).
               </p>
               <div className="flex justify-center gap-2">
-                <button
-                  onClick={() => switchChain({ chainId: 420420417 })}
-                  className="text-xs font-semibold bg-red-700 hover:bg-red-800 text-white px-3 py-1.5 rounded transition-colors"
-                >
+                <button onClick={() => switchChain({ chainId: 420420417 })}
+                  className="text-xs font-semibold bg-red-700 hover:bg-red-800 text-white px-3 py-1.5 rounded transition-colors">
                   Switch to Polkadot
                 </button>
-                <button
-                  onClick={() => switchChain({ chainId: 31337 })}
-                  className="text-xs font-semibold bg-red-700 hover:bg-red-800 text-white px-3 py-1.5 rounded transition-colors"
-                >
+                <button onClick={() => switchChain({ chainId: 31337 })}
+                  className="text-xs font-semibold bg-red-700 hover:bg-red-800 text-white px-3 py-1.5 rounded transition-colors">
                   Switch to Hardhat
                 </button>
-                <button
-                  onClick={() => switchChain({ chainId: 11155111 })}
-                  className="text-xs font-semibold bg-red-700 hover:bg-red-800 text-white px-3 py-1.5 rounded transition-colors"
-                >
+                <button onClick={() => switchChain({ chainId: 11155111 })}
+                  className="text-xs font-semibold bg-red-700 hover:bg-red-800 text-white px-3 py-1.5 rounded transition-colors">
                   Switch to Sepolia
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* My Cases — on-chain history */}
+          {isConnected && (
+            <div className="mb-8 p-6 bg-slate-50 rounded-lg border border-slate-200">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-slate-700">My Cases</h2>
+                <button
+                  onClick={() => { refetchAllEscrows(); refetchAllCases(); }}
+                  className="text-xs text-slate-500 hover:text-slate-800 border border-slate-200 px-3 py-1 rounded transition-colors"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              {allEscrowsLoading ? (
+                <p className="text-sm text-slate-500">Loading...</p>
+              ) : myCases.length === 0 ? (
+                <p className="text-sm text-slate-500">No cases deployed with this wallet yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {myCases.map((c) => (
+                    <div key={c.address} className={`border rounded-md p-4 transition-colors ${
+                      deployedEscrowAddress === c.address
+                        ? 'border-blue-400 bg-blue-50'
+                        : 'border-slate-200 bg-white'
+                    }`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-mono text-slate-600 break-all">{c.address}</p>
+                          <div className="flex flex-wrap gap-3 mt-1 text-xs text-slate-500">
+                            <span>Client: <span className="font-mono">{c.buyer?.slice(0, 8)}…</span></span>
+                            <span>Freelancer: <span className="font-mono">{c.seller?.slice(0, 8)}…</span></span>
+                            {c.settlementAmount !== undefined && (
+                              <span className="font-semibold text-slate-700">{formatEther(c.settlementAmount)} PAS</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {c.isReleased ? (
+                            <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded font-semibold">Released</span>
+                          ) : c.isFunded ? (
+                            <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-semibold">Funded</span>
+                          ) : (
+                            <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-semibold">Awaiting Funding</span>
+                          )}
+                          <button
+                            onClick={() => loadCase(c)}
+                            className={`text-xs font-semibold px-3 py-1 rounded transition-colors ${
+                              deployedEscrowAddress === c.address
+                                ? 'bg-blue-200 text-blue-800 cursor-default'
+                                : 'bg-slate-700 hover:bg-slate-800 text-white'
+                            }`}
+                          >
+                            {deployedEscrowAddress === c.address ? 'Active' : 'Load'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -464,8 +591,8 @@ export default function ArbiterPage() {
 
                 {deployedEscrowAddress && (
                   <div className="mt-2 p-4 bg-green-100 text-green-800 rounded-md border border-green-300">
-                    <p className="font-semibold">Contract deployed successfully.</p>
-                    <p className="text-xs mt-1 text-green-700">Escrow Address:</p>
+                    <p className="font-semibold">Active escrow contract:</p>
+                    <p className="text-xs mt-1 text-green-700">Address:</p>
                     <p className="text-xs break-all font-mono mt-1">{deployedEscrowAddress}</p>
                     <p className="text-xs text-green-600 mt-2">Share this address with the Client so they can fund the escrow.</p>
                   </div>
@@ -481,35 +608,22 @@ export default function ArbiterPage() {
             </div>
           )}
 
-          {/* Step 3: Fund Escrow */}
+          {/* Awaiting Funding notice */}
           {deployedEscrowAddress && isConnected && !isFunded && !isReleased && (
-            <div className="mt-8 p-6 bg-slate-50 rounded-lg border border-slate-200">
-              <h2 className="text-xl font-semibold mb-1 text-slate-700">3. Fund Escrow</h2>
-              <p className="text-sm text-slate-500 mb-1">
-                The Client must fund the escrow from their account.
+            <div className="mt-8 p-5 bg-amber-50 rounded-lg border border-amber-200">
+              <h2 className="text-lg font-semibold mb-1 text-amber-800">3. Awaiting Client Funding</h2>
+              <p className="text-sm text-amber-700">
+                Escrow deployed. Share the contract address with the Client — they must deposit{' '}
+                <strong>{settlementAmount} PAS</strong> to activate the escrow.
               </p>
-              <p className="text-sm text-slate-500 mb-4">
-                Client: <span className="font-mono text-slate-700">{buyerAddress}</span>
-              </p>
-              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-800">
-                Amount to deposit: <strong>{settlementAmount} PAS</strong>
-              </div>
-              <button onClick={handleFund} disabled={isEscrowPending}
-                className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 px-4 rounded-md transition-colors disabled:bg-slate-400">
-                {isEscrowPending ? 'Confirming in Wallet...' : `Deposit ${settlementAmount} PAS`}
-              </button>
-              {isEscrowError && (
-                <div className="mt-3 p-3 bg-red-100 text-red-800 rounded-md border border-red-300 text-xs font-mono break-all">
-                  {escrowError?.message}
-                </div>
-              )}
+              <p className="text-xs font-mono text-amber-600 mt-2 break-all">{deployedEscrowAddress}</p>
             </div>
           )}
 
-          {/* Step 4: Approve Release */}
+          {/* Approve Release */}
           {deployedEscrowAddress && isConnected && isFunded && !isReleased && (
             <div className="mt-8 p-6 bg-slate-50 rounded-lg border border-slate-200">
-              <h2 className="text-xl font-semibold mb-1 text-slate-700">4. Approve Release</h2>
+              <h2 className="text-xl font-semibold mb-1 text-slate-700">3. Approve Release</h2>
               <p className="text-sm text-slate-500 mb-4">
                 Each party (Client, Freelancer, Arbiter) must connect their wallet and approve. Funds release automatically at 2 of 3.
               </p>
@@ -544,7 +658,7 @@ export default function ArbiterPage() {
             </div>
           )}
 
-          {/* Step 5: Settlement Complete */}
+          {/* Settlement Complete */}
           {deployedEscrowAddress && isReleased && (
             <div className="mt-8 p-6 bg-green-50 rounded-lg border border-green-300 text-center">
               <h2 className="text-2xl font-bold text-green-800 mb-2">Settlement Complete</h2>
@@ -553,15 +667,14 @@ export default function ArbiterPage() {
             </div>
           )}
 
-          {/* Step 6: CPRA Ledger */}
+          {/* CPRA Ledger */}
           {deployedEscrowAddress && isConnected && (
             <div className="mt-8 p-6 bg-slate-50 rounded-lg border border-slate-200">
-              <h2 className="text-xl font-semibold mb-1 text-slate-700">6. CPRA Compliance Ledger</h2>
+              <h2 className="text-xl font-semibold mb-1 text-slate-700">CPRA Compliance Ledger</h2>
               <p className="text-sm text-slate-500 mb-4">
                 Record each phase of the settlement to the on-chain audit trail. Requires the <strong>law firm admin</strong> wallet.
               </p>
 
-              {/* Admin check */}
               {lawFirmAdmin && (
                 <div className={`mb-4 p-3 rounded-md border text-xs font-mono break-all ${
                   isAdmin
@@ -579,7 +692,6 @@ export default function ArbiterPage() {
                 </div>
               )}
 
-              {/* Ledger steps */}
               <div className="rounded-md border border-slate-200 bg-white divide-y divide-slate-100">
                 <LedgerStepRow
                   label="1. Register Case"

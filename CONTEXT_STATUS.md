@@ -6,9 +6,9 @@
 
 ## Current Status: Day 18 of 21
 
-**Phase:** PRD Alignment — Role-based UX + Ricardian Generator + Paseo Network
+**Phase:** Bug fixes — persistent on-chain history, role UX correctness, dashboard privacy
 
-Full settlement flow confirmed working on Hardhat local (Day 17). Now restructuring the app to match the PRD: role-differentiated pages (Client / Freelancer / Arbiter), onboarding/role-selection landing, Ricardian template generator replacing the PDF uploader, and Polkadot Paseo Testnet network support.
+PRD alignment (Week 4) is complete. Latest work fixed 6 role-page bugs: Arbiter no longer shows a Fund Escrow button; all three role pages now load their history from on-chain state (persistent across page refreshes); Freelancer shows the Arbiter address in each contract card; CPRA ledger progress is persisted per escrow in localStorage; Dashboard redacts wallet addresses and hides settlement amounts.
 
 ---
 
@@ -59,18 +59,19 @@ ABIs exported to: `legal-escrow-dapp/src/contracts/abis.ts`
 
 ---
 
-### Week 4 — PRD Alignment `[IN PROGRESS]`
+### Week 4 — PRD Alignment `[COMPLETE]`
 
 | Phase | Task | Status |
 |-------|------|--------|
-| 1 | Network config: add Paseo Testnet to Web3Provider + ETH→PAS labels | In Progress |
-| 1 | Terminology rename: Buyer→Client, Seller→Freelancer, Lawyer→Arbiter | Pending |
-| 2 | Onboarding page (`/`) — connect wallet + role selector (Client / Freelancer / Arbiter) | Pending |
-| 2 | Role routing: `/client`, `/freelancer`, `/arbiter` pages + `RoleGuard` component | Pending |
-| 3 | `RicardianGenerator.tsx` — Philippine FSA template form → auto-hash (replaces PDF uploader) | Pending |
-| 4 | Client page (`/client`) — create deal → submit for Arbiter review → fund → approve | Pending |
-| 5 | Freelancer page (`/freelancer`) — view contracts → approve release → settlement received | Pending |
-| 6 | Arbiter page (`/arbiter`) — pending deals queue + review + deploy + CPRA ledger | Pending |
+| 1 | Network config: add Paseo Testnet to Web3Provider + ETH→PAS labels | Done |
+| 1 | Terminology rename: Buyer→Client, Seller→Freelancer, Lawyer→Arbiter | Done |
+| 2 | Onboarding page (`/`) — connect wallet + role selector (Client / Freelancer / Arbiter) | Done |
+| 2 | Role routing: `/client`, `/freelancer`, `/arbiter` pages + `RoleGuard` component | Done |
+| 3 | `RicardianGenerator.tsx` — Philippine FSA template form → auto-hash (replaces PDF uploader) | Done |
+| 4 | Client page (`/client`) — create deal → submit for Arbiter review → fund → approve | Done |
+| 5 | Freelancer page (`/freelancer`) — view contracts → approve release → settlement received | Done |
+| 6 | Arbiter page (`/arbiter`) — pending deals queue + review + deploy + CPRA ledger | Done |
+| Bug fixes | Remove Fund Escrow from Arbiter; on-chain history for all roles; CPRA ledger persistence; dashboard privacy | Done |
 
 ---
 
@@ -118,7 +119,8 @@ backend/
 |-----|-----------|---------|---------|
 | `agartha_role` | Onboarding page | RoleGuard, all pages | `'client' \| 'freelancer' \| 'arbiter'` |
 | `agartha_pending_deals` | Client page | Arbiter page | `Array<{ id, clientAddress, freelancerAddress, amount, documentHash, title, deliverables, deadline }>` |
-| `agartha_escrow_map` | Arbiter page (after deploy) | Client page | `Record<dealId, escrowAddress>` |
+| `agartha_escrow_map` | Arbiter page (after deploy) | Client page | `Record<clientAddress, escrowAddress>` |
+| `agartha_ledger_<escrowAddr>` | Arbiter page (after each ledger tx) | Arbiter page (on loadCase) | `{ registered, depositRecorded, disbursementRecorded, closed }` — one key per escrow address |
 
 ---
 
@@ -235,6 +237,12 @@ useSwitchChain()                  // network guard
 - [x] Build Freelancer page (`/freelancer`)
 - [x] Build Arbiter page (`/arbiter`) with pending deals queue
 - [x] Update `README.md` with new role-based flow
+- [x] Remove Fund Escrow button from Arbiter page (Client-only action)
+- [x] Add on-chain "My Cases" history to Arbiter page (persistent across reloads, Load button per case)
+- [x] Add on-chain "My Deals" history to Client page (persistent across reloads, per-deal Fund/Approve)
+- [x] Add `lawyer` field to Freelancer batch reads; show Arbiter address in contract cards
+- [x] Persist CPRA ledger progress per escrow in localStorage (`agartha_ledger_<addr>`)
+- [x] Dashboard privacy: truncate wallet addresses, hide settlement amounts ("Confidential")
 
 ---
 
@@ -253,3 +261,4 @@ useSwitchChain()                  // network guard
 | 2026-03-12 | Polish complete in `page.tsx`: wrong-network guard banner (switchChain to Hardhat/Sepolia), fixed bottom-right toast stack (success = green, error = red, 3.5 s auto-dismiss), `formatEther` for ETH display, `useChainId`/`useSwitchChain` network guard hooks. All three polish checklist items ticked. |
 | 2026-03-12 | PRD alignment sprint started (Week 4). Gap analysis complete. Pipeline: Phase 1 (network + terminology) → Phase 2 (onboarding + role routing) → Phase 3 (Ricardian generator) → Phase 4–6 (Client / Freelancer / Arbiter pages). localStorage used for cross-role state coordination (no backend). |
 | 2026-03-12 | Week 4 PRD alignment complete. All phases done: terminology rename (ETH→PAS, Buyer→Client, Seller→Freelancer, Lawyer→Arbiter), onboarding role-selector page, RoleGuard, RicardianGenerator (Philippine FSA template + SHA256), Client/Freelancer/Arbiter role pages, pending deals queue in Arbiter. Polkadot EVM Testnet added to Web3Provider (chain ID 420420417, RPC https://eth-rpc-testnet.polkadot.io/, PAS currency). |
+| 2026-03-12 | Bug fixes across all role pages: removed Fund Escrow from Arbiter (Client-only); rewrote Arbiter/Client pages to load on-chain history via `getDeployedEscrows()` + `useReadContracts` batch reads filtered by `lawyer`/`buyer` — persistent across page refreshes; added CPRA ledger progress persistence per escrow (`agartha_ledger_<addr>` localStorage); added `lawyer` field to Freelancer batch reads (8 reads/escrow); dashboard privacy: `truncAddr()` helper, settlement amounts hidden as "Confidential". TypeScript check passes with 0 errors. |

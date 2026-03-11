@@ -6,7 +6,10 @@ async function main() {
   const [deployer] = await hre.ethers.getSigners();
 
   console.log("Deploying with account:", deployer.address);
-  console.log("Balance:", hre.ethers.formatEther(await hre.ethers.provider.getBalance(deployer.address)), "ETH\n");
+  const balance = await hre.ethers.provider.getBalance(deployer.address);
+  const networkName = hre.network.name;
+  const symbol = networkName === "polkadotTestnet" ? "PAS" : "ETH";
+  console.log("Balance:", hre.ethers.formatEther(balance), symbol + "\n");
 
   // Deploy LegalFactory
   const LegalFactory = await hre.ethers.getContractFactory("LegalFactory");
@@ -38,7 +41,12 @@ async function main() {
   console.log("This is the wallet that must connect to record CPRA ledger entries.");
 
   console.log("\n--- MetaMask network ---");
-  console.log("RPC URL: http://127.0.0.1:8545  |  Chain ID: 31337  |  Symbol: ETH");
+  if (networkName === "polkadotTestnet") {
+    console.log("RPC URL: https://eth-rpc-testnet.polkadot.io/  |  Chain ID: 420420417  |  Symbol: PAS");
+    console.log("Explorer: https://blockscout-testnet.polkadot.io");
+  } else {
+    console.log("RPC URL: http://127.0.0.1:8545  |  Chain ID: 31337  |  Symbol: ETH");
+  }
 }
 
 main().catch((err) => {
