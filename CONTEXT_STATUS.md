@@ -6,9 +6,9 @@
 
 ## Current Status: Day 18 of 21
 
-**Phase:** Bug fixes — persistent on-chain history, role UX correctness, dashboard privacy
+**Phase:** Issue fix sprint — security, UX, contract, and privacy issues resolved
 
-PRD alignment (Week 4) is complete. Latest work fixed 6 role-page bugs: Arbiter no longer shows a Fund Escrow button; all three role pages now load their history from on-chain state (persistent across page refreshes); Freelancer shows the Arbiter address in each contract card; CPRA ledger progress is persisted per escrow in localStorage; Dashboard redacts wallet addresses and hides settlement amounts.
+4 post-Week-4 issues fixed: (1) Deal access-code gating — Clients generate a base64 deal code and share it out-of-band; Arbiters paste the code to load deals privately. (2) Agreement viewing — `buildDocument` exported from RicardianGenerator; all three role pages can now view and import Ricardian contracts per escrow. (3) CPRALedger admin lock removed — contract rewritten so the Escrow's `lawyer` can self-register and manage their own case; no deployer wallet needed. (4) Global Case Ledger moved to landing page; dashboard strips all party data and shows only Case ID + status.
 
 ---
 
@@ -118,9 +118,10 @@ backend/
 | Key | Written by | Read by | Content |
 |-----|-----------|---------|---------|
 | `agartha_role` | Onboarding page | RoleGuard, all pages | `'client' \| 'freelancer' \| 'arbiter'` |
-| `agartha_pending_deals` | Client page | Arbiter page | `Array<{ id, clientAddress, freelancerAddress, amount, documentHash, title, deliverables, deadline }>` |
+| `agartha_my_pending_deals` | Arbiter page (on code paste) | Arbiter page | `Array<dealObject>` — private per-browser arbiter queue (replaces shared `agartha_pending_deals`) |
 | `agartha_escrow_map` | Arbiter page (after deploy) | Client page | `Record<clientAddress, escrowAddress>` |
 | `agartha_ledger_<escrowAddr>` | Arbiter page (after each ledger tx) | Arbiter page (on loadCase) | `{ registered, depositRecorded, disbursementRecorded, closed }` — one key per escrow address |
+| `agartha_deal_doc_<documentHash>` | Client (on code generate), Arbiter (on code paste) | All three role pages | `{ formData: RicardianFormData, documentHash: string }` — enables agreement viewing per escrow |
 
 ---
 
@@ -262,3 +263,4 @@ useSwitchChain()                  // network guard
 | 2026-03-12 | PRD alignment sprint started (Week 4). Gap analysis complete. Pipeline: Phase 1 (network + terminology) → Phase 2 (onboarding + role routing) → Phase 3 (Ricardian generator) → Phase 4–6 (Client / Freelancer / Arbiter pages). localStorage used for cross-role state coordination (no backend). |
 | 2026-03-12 | Week 4 PRD alignment complete. All phases done: terminology rename (ETH→PAS, Buyer→Client, Seller→Freelancer, Lawyer→Arbiter), onboarding role-selector page, RoleGuard, RicardianGenerator (Philippine FSA template + SHA256), Client/Freelancer/Arbiter role pages, pending deals queue in Arbiter. Polkadot EVM Testnet added to Web3Provider (chain ID 420420417, RPC https://eth-rpc-testnet.polkadot.io/, PAS currency). |
 | 2026-03-12 | Bug fixes across all role pages: removed Fund Escrow from Arbiter (Client-only); rewrote Arbiter/Client pages to load on-chain history via `getDeployedEscrows()` + `useReadContracts` batch reads filtered by `lawyer`/`buyer` — persistent across page refreshes; added CPRA ledger progress persistence per escrow (`agartha_ledger_<addr>` localStorage); added `lawyer` field to Freelancer batch reads (8 reads/escrow); dashboard privacy: `truncAddr()` helper, settlement amounts hidden as "Confidential". TypeScript check passes with 0 errors. |
+| 2026-03-12 | Issue fix sprint (4 issues): (1) Deal code gating — Client generates `btoa(JSON.stringify(deal))` instead of writing to shared localStorage; Arbiter pastes code to decode + adds to private `agartha_my_pending_deals`; saves `agartha_deal_doc_<hash>` for agreement viewing. (2) Agreement viewing — exported `buildDocument` + `RicardianFormData` from RicardianGenerator; all three role pages batch-read `documentHash` on-chain (+1 read/escrow); View Agreement button when doc in localStorage; Import Agreement via agreement code (base64) for Freelancer; Arbiter "Copy Agreement Code" button per case card. (3) CPRALedger.sol rewritten — added `ILegalEscrow` interface, `caseRegistrar` mapping, `onlyCaseRegistrar` modifier; `registerCase` validates `keccak256(escrowAddr) == caseId` + `ILegalEscrow(escrow).lawyer() == msg.sender`; removed deployer-only restriction; `abis.ts` updated with `caseRegistrar` view function; Arbiter page admin guard + banner removed. (4) Dashboard — strips to `keccak256(escrowAddr)` (truncated) + status badge only; landing page adds "View Global Case Ledger →" link; dashboard links removed from client/arbiter pages. TypeScript check: 0 errors. |

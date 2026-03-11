@@ -20,10 +20,12 @@ Built on Polkadot (Paseo Testnet) with Solidity smart contracts, Next.js fronten
 
 - Role-based onboarding — each party selects their role on connecting their wallet
 - Ricardian Contract Generator — form-based Philippine Freelance Service Agreement with auto-generated cryptographic hash
+- Deal Code System — Client generates a portable base64 code and shares it with their Arbiter out-of-band; no shared state required
 - Smart Contract Factory — deploys a unique escrow vault per agreement
 - Multi-signature Escrow — 2-of-3 approval (Client + Freelancer + Arbiter) to release funds
-- CPRA-compliant Ledger — on-chain audit trail managed by the Arbiter
-- Shared read-only dashboard — all roles can view all case statuses
+- Agreement Viewing — all three parties can view the full rendered Ricardian contract; Freelancer imports it via an Agreement Code from the Arbiter
+- CPRA-compliant Ledger — on-chain audit trail; the Arbiter who deployed the escrow manages their own case entries (no deployer wallet needed)
+- Global Case Ledger — public read-only dashboard showing Case ID and status per escrow, accessible from the landing page
 
 ---
 
@@ -99,6 +101,13 @@ npm run dev
 
 Open `http://localhost:3000` in your browser. Make sure MetaMask is switched to the **Hardhat Local** network.
 
+### ⚠️ MetaMask nonce reset (required after every `hardhat node` restart)
+
+When `npx hardhat node` restarts, the chain resets to block 0 but MetaMask still caches old nonces for each account — this causes all transactions to hang silently.
+
+**Do this for every Hardhat account imported into MetaMask, before submitting any transaction:**
+MetaMask → click the account → three-dot menu → Settings → Advanced → **Clear activity and nonce data**
+
 ---
 
 ## Testing on Sepolia Testnet
@@ -111,7 +120,7 @@ If `.env.local` is absent, the app falls back to the already-deployed Sepolia co
 
 **Deployed Sepolia addresses:**
 - `LegalFactory`: `0x688c0611a5691B7c1F09a694bf4ADfb456a58Cf7`
-- `CPRALedger`: `0x4815A8Ba613a3eB21A920739dE4cA7C439c7e1b1`
+- `CPRALedger`: `0x4815A8Ba613a3eB21A920739dE4cA7C439c7e1b1` ⚠️ stale — this is the old contract without self-registering arbiter support; redeploy with `npx hardhat run scripts/deploy.js --network sepolia` and update `.env.local` to use CPRA ledger features on Sepolia
 
 ---
 
@@ -134,28 +143,33 @@ All three parties open `http://localhost:3000`, connect their wallet, and select
 ### 2. Client creates the project request (`/client`)
 - Fills out the Ricardian Contract form: project title, deliverables, deadline, PAS amount, Freelancer wallet address
 - A Philippine Freelance Service Agreement is generated from the form inputs with a unique cryptographic hash
-- Client clicks **Submit for Arbiter Review** — deal is saved locally
+- Client clicks **Generate Deal Code** — a base64 encoded string containing the full deal payload is displayed
+- Client copies the code and sends it to their chosen Arbiter through any secure channel (email, chat, etc.)
 
 ### 3. Arbiter reviews and deploys (`/arbiter`)
-- Arbiter sees the pending deal in their review queue
-- Expands the deal to read the full contract terms
-- Clicks **Deploy Contract** — this calls `Factory.createCase()` on-chain
-- The new escrow address is shared back to the Client (stored locally)
+- Arbiter pastes the deal code into the "Load Deal from Code" input and clicks **Load**
+- The deal appears in the Arbiter's private queue — only this browser/device can see it
+- Arbiter expands the deal to read the full contract terms, then clicks **Deploy** to pre-fill the deploy form
+- Arbiter clicks **Deploy Smart Contract** — calls `Factory.createCase()` on-chain
+- After deployment, the case card shows a **Copy Agreement Code** button — Arbiter shares this code with the Freelancer so they can view the signed contract terms
 
 ### 4. Client funds escrow (`/client`)
-- Client enters (or auto-reads) the escrow address
-- Clicks **Deposit PAS** — sends the exact settlement amount to the escrow vault
+- The escrow address appears in Client's "My Deals" list (loaded from the factory on-chain)
+- Client clicks **Deposit PAS** — sends the exact settlement amount to the escrow vault
 
-### 5. Freelancer delivers and approves (`/freelancer`)
-- Freelancer views their active contracts
+### 5. Freelancer imports agreement and approves (`/freelancer`)
+- Freelancer sees their active contracts in "My Contracts"
+- Pastes the Agreement Code from the Arbiter to import and view the full rendered Ricardian contract
 - After delivering the work, clicks **Approve Release**
 
 ### 6. Client and Arbiter approve
-- Client and Arbiter each connect and click **Approve Release**
+- Client and Arbiter each connect and click **Approve Release** on their respective pages
 - Funds auto-release to the Freelancer once 2 of 3 parties have approved
 
 ### 7. Arbiter records to CPRA Ledger (`/arbiter`)
 - Arbiter completes the 4-step compliance record: Register → Deposit → Disbursement → Close
+- Each step is gated by on-chain state (e.g. Deposit requires `isFunded`, Disbursement requires `isReleased`)
+- The Arbiter's wallet is self-authorized — no deployer wallet required
 
 ### Dispute path
 If Client and Freelancer disagree, the Arbiter's single approval (combined with one of the two parties) constitutes the 2-of-3 majority, resolving the dispute.

@@ -13,7 +13,7 @@ import {
 import { parseEther, formatEther, isAddress } from 'viem';
 import { FACTORY_ADDRESS, FACTORY_ABI, ESCROW_ABI } from '../../contracts/abis';
 import { RoleGuard } from '../../components/RoleGuard';
-import { RicardianGenerator } from '../../components/RicardianGenerator';
+import { RicardianGenerator, buildDocument, RicardianFormData } from '../../components/RicardianGenerator';
 
 type ToastEntry = { id: number; message: string; type: 'success' | 'error' };
 
@@ -26,6 +26,7 @@ interface MyDealItem {
   isReleased:       boolean | undefined;
   approvalCount:    bigint | undefined;
   hasApproved:      boolean | undefined;
+  documentHash:     string | undefined;
 }
 
 export default function ClientPage() {
@@ -78,6 +79,7 @@ export default function ClientPage() {
     { address: addr, abi: ESCROW_ABI, functionName: 'isReleased' },
     { address: addr, abi: ESCROW_ABI, functionName: 'approvalCount' },
     { address: addr, abi: ESCROW_ABI, functionName: 'hasApproved', args: address ? [address] : undefined },
+    { address: addr, abi: ESCROW_ABI, functionName: 'documentHash' },
   ]);
 
   const { data: dealStateData, refetch: refetchDealState } = useReadContracts({
@@ -87,7 +89,7 @@ export default function ClientPage() {
 
   const myDeals: MyDealItem[] = allEscrows
     .map((addr, i) => {
-      const base = i * 7;
+      const base = i * 8;
       return {
         address: addr,
         buyer:            dealStateData?.[base + 0]?.result as `0x${string}` | undefined,
@@ -97,6 +99,7 @@ export default function ClientPage() {
         isReleased:       dealStateData?.[base + 4]?.result as boolean | undefined,
         approvalCount:    dealStateData?.[base + 5]?.result as bigint | undefined,
         hasApproved:      dealStateData?.[base + 6]?.result as boolean | undefined,
+        documentHash:     dealStateData?.[base + 7]?.result as string | undefined,
       };
     })
     .filter((d) => d.buyer?.toLowerCase() === address?.toLowerCase());
@@ -125,20 +128,31 @@ export default function ClientPage() {
     writeEscrow({ address: addr, abi: ESCROW_ABI, functionName: 'approveRelease' });
   };
 
+  // ── Agreement viewing state ───────────────────────────────────────────────────
+
+  const [expandedAgreements, setExpandedAgreements] = useState<Set<string>>(new Set());
+
+  const loadDocFromStorage = (hash: string): { formData: RicardianFormData; documentHash: string } | null => {
+    try {
+      const saved = localStorage.getItem(`agartha_deal_doc_${hash}`);
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  };
+
   // ── New deal form state ───────────────────────────────────────────────────────
 
   const [showNewDeal, setShowNewDeal] = useState(false);
   const [documentHash, setDocumentHash] = useState<string>('');
   const [dealFormData, setDealFormData] = useState<any>(null);
   const [dealSubmitted, setDealSubmitted] = useState(false);
-  const [dealId, setDealId] = useState<string>('');
+  const [dealCode, setDealCode] = useState<string>('');
 
   const handleAgreementGenerated = (data: { documentHash: string; formData: any }) => {
     setDocumentHash(data.documentHash);
     setDealFormData(data.formData);
   };
 
-  const handleSubmitDeal = () => {
+  const handleGenerateDealCode = () => {
     if (!documentHash || !dealFormData || !address) return;
     if (!isAddress(dealFormData.freelancerAddress)) return showToast('Invalid freelancer address', 'error');
     const id = Date.now().toString(36);
@@ -152,11 +166,11 @@ export default function ClientPage() {
       deadline:          dealFormData.deadline,
       documentHash,
     };
-    const existing = JSON.parse(localStorage.getItem('agartha_pending_deals') || '[]');
-    localStorage.setItem('agartha_pending_deals', JSON.stringify([...existing, deal]));
-    setDealId(id);
+    // Persist form data locally so this client can view the agreement later (Issue 2)
+    localStorage.setItem(`agartha_deal_doc_${documentHash}`, JSON.stringify({ formData: dealFormData, documentHash }));
+    setDealCode(window.btoa(JSON.stringify(deal)));
     setDealSubmitted(true);
-    showToast('Deal submitted for Arbiter review');
+    showToast('Deal code generated — share it with your Arbiter');
   };
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -293,6 +307,35 @@ export default function ClientPage() {
                         </div>
                       )}
 
+                      {/* View Agreement */}
+                      {d.documentHash && (() => {
+                        const doc = loadDocFromStorage(d.documentHash);
+                        const isExpanded = expandedAgreements.has(d.address);
+                        if (!doc) return null;
+                        return (
+                          <div className="mt-2 border-t border-slate-200 pt-2">
+                            <button
+                              onClick={() => setExpandedAgreements(prev => {
+                                const next = new Set(prev);
+                                isExpanded ? next.delete(d.address) : next.add(d.address);
+                                return next;
+                              })}
+                              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1 rounded transition-colors"
+                            >
+                              {isExpanded ? 'Hide Agreement' : 'View Agreement'}
+                            </button>
+                            {isExpanded && (
+                              <div className="mt-2">
+                                <pre className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
+                                  {buildDocument(doc.formData)}
+                                </pre>
+                                <p className="text-xs text-slate-400 mt-1 font-mono break-all">Hash: {doc.documentHash}</p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
                       {isEscrowError && pendingAction === d.address && (
                         <div className="mt-2 p-2 bg-red-100 text-red-700 rounded text-xs font-mono break-all">
                           {escrowError?.message}
@@ -323,37 +366,47 @@ export default function ClientPage() {
                   {/* Step 1: Generate Agreement */}
                   <RicardianGenerator onGenerated={handleAgreementGenerated} />
 
-                  {/* Step 2: Submit for Arbiter Review */}
+                  {/* Step 2: Generate Deal Code */}
                   {documentHash && !dealSubmitted && (
                     <div className="mt-6 p-6 bg-slate-50 rounded-lg border border-slate-200">
-                      <h2 className="text-lg font-semibold mb-1 text-slate-700">Submit for Arbiter Review</h2>
+                      <h2 className="text-lg font-semibold mb-1 text-slate-700">Generate Deal Code</h2>
                       <p className="text-sm text-slate-500 mb-4">
-                        Your agreement is hashed and ready. Submit it for the Arbiter to review and deploy the escrow contract.
+                        Your agreement is hashed and ready. Generate a deal code and share it with your Arbiter through your own secure channel.
                       </p>
                       <button
-                        onClick={handleSubmitDeal}
+                        onClick={handleGenerateDealCode}
                         className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-md transition-colors"
                       >
-                        Submit for Arbiter Review
+                        Generate Deal Code
                       </button>
                     </div>
                   )}
 
-                  {/* Submitted confirmation */}
+                  {/* Deal code display */}
                   {dealSubmitted && (
                     <div className="mt-6 p-5 bg-indigo-50 border border-indigo-200 rounded-lg">
-                      <p className="font-semibold text-indigo-800">Deal submitted for review.</p>
-                      <p className="text-sm text-indigo-600 mt-1">
-                        Reference ID: <span className="font-mono font-bold">{dealId}</span>
+                      <p className="font-semibold text-indigo-800 mb-2">Deal code generated.</p>
+                      <p className="text-xs text-indigo-600 mb-3">
+                        Copy this code and send it to your Arbiter. They will paste it into the Arbiter Portal to load your deal.
                       </p>
-                      <p className="text-xs text-indigo-500 mt-2">
-                        Once the Arbiter deploys the escrow contract, it will appear in your deals above.
-                      </p>
+                      <textarea
+                        readOnly
+                        value={dealCode}
+                        rows={4}
+                        className="w-full font-mono text-xs bg-white border border-indigo-200 rounded-md p-3 text-slate-700 resize-none focus:outline-none"
+                        onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                      />
                       <button
-                        onClick={() => { setDealSubmitted(false); setDocumentHash(''); setDealFormData(null); }}
-                        className="mt-3 text-xs text-indigo-600 hover:text-indigo-800 underline"
+                        onClick={() => { navigator.clipboard.writeText(dealCode); showToast('Code copied to clipboard'); }}
+                        className="mt-2 text-xs font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1.5 rounded transition-colors"
                       >
-                        Submit another deal
+                        Copy to Clipboard
+                      </button>
+                      <button
+                        onClick={() => { setDealSubmitted(false); setDocumentHash(''); setDealFormData(null); setDealCode(''); }}
+                        className="mt-3 ml-3 text-xs text-indigo-500 hover:text-indigo-700 underline"
+                      >
+                        Create another deal
                       </button>
                     </div>
                   )}

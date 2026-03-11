@@ -85,6 +85,16 @@ export default function OnboardingPage() {
           </div>
         </div>
 
+        {/* Global Case Ledger link */}
+        <div className="text-center mt-6">
+          <Link
+            href="/dashboard"
+            className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors"
+          >
+            View Global Case Ledger →
+          </Link>
+        </div>
+
         {!isConnected && (
           <p className="text-center text-xs text-slate-400 mt-4">
             Connect your Web3 wallet above to select a role and enter the platform.

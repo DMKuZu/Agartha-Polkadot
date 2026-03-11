@@ -7,6 +7,7 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadCont
 import { formatEther } from 'viem';
 import { FACTORY_ADDRESS, FACTORY_ABI, ESCROW_ABI } from '../../contracts/abis';
 import { RoleGuard } from '../../components/RoleGuard';
+import { buildDocument, RicardianFormData } from '../../components/RicardianGenerator';
 
 type ToastEntry = { id: number; message: string; type: 'success' | 'error' };
 
@@ -51,7 +52,7 @@ export default function FreelancerPage() {
 
   const allEscrows = (escrowsRaw ?? []) as `0x${string}`[];
 
-  // ── Batch read: seller + isFunded + isReleased + approvalCount + hasApproved ──
+  // ── Batch read: seller + isFunded + isReleased + approvalCount + hasApproved + documentHash ──
 
   const contractReads = allEscrows.flatMap((addr) => [
     { address: addr, abi: ESCROW_ABI, functionName: 'seller' },
@@ -62,6 +63,7 @@ export default function FreelancerPage() {
     { address: addr, abi: ESCROW_ABI, functionName: 'isReleased' },
     { address: addr, abi: ESCROW_ABI, functionName: 'approvalCount' },
     { address: addr, abi: ESCROW_ABI, functionName: 'hasApproved', args: address ? [address] : undefined },
+    { address: addr, abi: ESCROW_ABI, functionName: 'documentHash' },
   ]);
 
   const { data: stateData, refetch: refetchState } = useReadContracts({
@@ -73,7 +75,7 @@ export default function FreelancerPage() {
 
   const myContracts = allEscrows
     .map((addr, i) => {
-      const base = i * 8;
+      const base = i * 9;
       return {
         address: addr,
         seller:           stateData?.[base + 0]?.result as `0x${string}` | undefined,
@@ -84,6 +86,7 @@ export default function FreelancerPage() {
         isReleased:       stateData?.[base + 5]?.result as boolean | undefined,
         approvalCount:    stateData?.[base + 6]?.result as bigint | undefined,
         hasApproved:      stateData?.[base + 7]?.result as boolean | undefined,
+        documentHash:     stateData?.[base + 8]?.result as string | undefined,
       };
     })
     .filter((c) => c.seller?.toLowerCase() === address?.toLowerCase());
@@ -91,6 +94,31 @@ export default function FreelancerPage() {
   // ── Handlers ──────────────────────────────────────────────────────────────────
 
   const [pendingApproval, setPendingApproval] = useState<string | null>(null);
+
+  // ── Agreement viewing state ───────────────────────────────────────────────────
+
+  const [expandedAgreements, setExpandedAgreements] = useState<Set<string>>(new Set());
+  const [importInputs, setImportInputs] = useState<Record<string, string>>({});
+
+  const loadDocFromStorage = (hash: string): { formData: RicardianFormData; documentHash: string } | null => {
+    try {
+      const saved = localStorage.getItem(`agartha_deal_doc_${hash}`);
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  };
+
+  const handleImportAgreement = (hash: string, code: string) => {
+    try {
+      const decoded = JSON.parse(atob(code.trim()));
+      if (!decoded.formData || !decoded.documentHash) throw new Error('Invalid');
+      localStorage.setItem(`agartha_deal_doc_${decoded.documentHash}`, JSON.stringify(decoded));
+      setImportInputs(prev => ({ ...prev, [hash]: '' }));
+      setExpandedAgreements(prev => new Set([...prev, hash]));
+      showToast('Agreement imported');
+    } catch {
+      showToast('Invalid agreement code', 'error');
+    }
+  };
 
   const handleApprove = (escrowAddr: `0x${string}`) => {
     setPendingApproval(escrowAddr);
@@ -208,6 +236,60 @@ export default function FreelancerPage() {
                         </p>
                       </div>
                     </div>
+
+                    {/* Agreement viewing / import */}
+                    {c.documentHash && (() => {
+                      const doc = loadDocFromStorage(c.documentHash);
+                      const isExpanded = expandedAgreements.has(c.address);
+                      return (
+                        <div className="mt-3 mb-4 border-t border-slate-200 pt-3">
+                          {doc ? (
+                            <>
+                              <button
+                                onClick={() => setExpandedAgreements(prev => {
+                                  const next = new Set(prev);
+                                  isExpanded ? next.delete(c.address) : next.add(c.address);
+                                  return next;
+                                })}
+                                className="text-xs font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1 rounded transition-colors"
+                              >
+                                {isExpanded ? 'Hide Agreement' : 'View Agreement'}
+                              </button>
+                              {isExpanded && (
+                                <div className="mt-3">
+                                  <pre className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
+                                    {buildDocument(doc.formData)}
+                                  </pre>
+                                  <p className="text-xs text-slate-400 mt-1 font-mono break-all">Hash: {doc.documentHash}</p>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <div>
+                              <p className="text-xs text-slate-500 mb-2">
+                                Paste the Agreement Code from your Arbiter to view the contract:
+                              </p>
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  placeholder="Paste agreement code…"
+                                  value={importInputs[c.address] || ''}
+                                  onChange={(e) => setImportInputs(prev => ({ ...prev, [c.address]: e.target.value }))}
+                                  className="flex-1 p-1.5 text-xs border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white text-slate-700"
+                                />
+                                <button
+                                  onClick={() => handleImportAgreement(c.documentHash!, importInputs[c.address] || '')}
+                                  disabled={!importInputs[c.address]?.trim()}
+                                  className="text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded transition-colors disabled:bg-slate-400"
+                                >
+                                  Import
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {/* Settlement received banner */}
                     {c.isReleased && (

@@ -15,6 +15,7 @@ import {
 import { parseEther, formatEther, isAddress, parseEventLogs, keccak256 } from 'viem';
 import { FACTORY_ADDRESS, FACTORY_ABI, ESCROW_ABI, LEDGER_ADDRESS, LEDGER_ABI } from '../../contracts/abis';
 import { RoleGuard } from '../../components/RoleGuard';
+import { buildDocument, RicardianFormData } from '../../components/RicardianGenerator';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,7 @@ interface MyCaseItem {
   isFunded:      boolean | undefined;
   isReleased:    boolean | undefined;
   approvalCount: bigint  | undefined;
+  documentHash:  string  | undefined;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -129,6 +131,7 @@ export default function ArbiterPage() {
     { address: addr, abi: ESCROW_ABI, functionName: 'isFunded' },
     { address: addr, abi: ESCROW_ABI, functionName: 'isReleased' },
     { address: addr, abi: ESCROW_ABI, functionName: 'approvalCount' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'documentHash' },
   ]);
 
   const { data: allCasesData, refetch: refetchAllCases } = useReadContracts({
@@ -138,7 +141,7 @@ export default function ArbiterPage() {
 
   const myCases: MyCaseItem[] = allEscrows
     .map((addr, i) => {
-      const base = i * 7;
+      const base = i * 8;
       return {
         address: addr,
         lawyer:           allCasesData?.[base + 0]?.result as `0x${string}` | undefined,
@@ -148,6 +151,7 @@ export default function ArbiterPage() {
         isFunded:         allCasesData?.[base + 4]?.result as boolean | undefined,
         isReleased:       allCasesData?.[base + 5]?.result as boolean | undefined,
         approvalCount:    allCasesData?.[base + 6]?.result as bigint | undefined,
+        documentHash:     allCasesData?.[base + 7]?.result as string | undefined,
       };
     })
     .filter((c) => c.lawyer?.toLowerCase() === address?.toLowerCase());
@@ -208,14 +212,6 @@ export default function ArbiterPage() {
   });
   const hasCurrentWalletApproved = hasCurrentWalletApprovedRaw as boolean | undefined;
 
-  // ── Read lawFirmAdmin from ledger ────────────────────────────────────────────
-
-  const { data: lawFirmAdminRaw } = useReadContract({
-    address: LEDGER_ADDRESS, abi: LEDGER_ABI, functionName: 'lawFirmAdmin',
-  });
-  const lawFirmAdmin = lawFirmAdminRaw as `0x${string}` | undefined;
-  const isAdmin = !!(address && lawFirmAdmin && address.toLowerCase() === lawFirmAdmin.toLowerCase());
-
   // ── Network guard ─────────────────────────────────────────────────────────────
 
   const chainId = useChainId();
@@ -260,15 +256,45 @@ export default function ArbiterPage() {
     showToast('Ledger entry recorded');
   }, [isLedgerTxConfirmed]);
 
-  // ── Pending deals from localStorage ─────────────────────────────────────────
+  // ── Pending deals (private per-browser, loaded from deal code) ───────────────
 
   const [pendingDeals, setPendingDeals] = useState<any[]>([]);
   const [expandedDeal, setExpandedDeal] = useState<string | null>(null);
+  const [dealCodeInput, setDealCodeInput] = useState<string>('');
 
   useEffect(() => {
-    const stored = JSON.parse(localStorage.getItem('agartha_pending_deals') || '[]');
+    const stored = JSON.parse(localStorage.getItem('agartha_my_pending_deals') || '[]');
     setPendingDeals(stored);
   }, []);
+
+  const handleDecodeDealCode = () => {
+    try {
+      const decoded = JSON.parse(atob(dealCodeInput.trim()));
+      if (!decoded.id || !decoded.clientAddress || !decoded.documentHash) throw new Error('Invalid code');
+      const existing: any[] = JSON.parse(localStorage.getItem('agartha_my_pending_deals') || '[]');
+      if (existing.find((d) => d.id === decoded.id)) {
+        showToast('Deal already in queue', 'error');
+        return;
+      }
+      // Save agreement data so arbiter can reconstruct the document
+      const formData: RicardianFormData = {
+        title: decoded.title || '',
+        deliverables: decoded.deliverables || '',
+        deadline: decoded.deadline || '',
+        amount: decoded.amount || '',
+        clientAddress: decoded.clientAddress || '',
+        freelancerAddress: decoded.freelancerAddress || '',
+      };
+      localStorage.setItem(`agartha_deal_doc_${decoded.documentHash}`, JSON.stringify({ formData, documentHash: decoded.documentHash }));
+      const updated = [...existing, decoded];
+      localStorage.setItem('agartha_my_pending_deals', JSON.stringify(updated));
+      setPendingDeals(updated);
+      setDealCodeInput('');
+      showToast('Deal loaded from code');
+    } catch {
+      showToast('Invalid deal code', 'error');
+    }
+  };
 
   const prefillFromDeal = (deal: any) => {
     setBuyerAddress(deal.clientAddress || '');
@@ -278,6 +304,23 @@ export default function ArbiterPage() {
     setDocumentHash(deal.documentHash || '');
     setDeployedEscrowAddress(null);
     setLedgerDone(BLANK_LEDGER);
+  };
+
+  // ── Agreement viewing state ───────────────────────────────────────────────────
+
+  const [expandedAgreements, setExpandedAgreements] = useState<Set<string>>(new Set());
+
+  const loadDocFromStorage = (hash: string): { formData: RicardianFormData; documentHash: string } | null => {
+    try {
+      const saved = localStorage.getItem(`agartha_deal_doc_${hash}`);
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  };
+
+  const getAgreementCode = (docHash: string, escrowAddr: string): string | null => {
+    const doc = loadDocFromStorage(docHash);
+    if (!doc) return null;
+    return window.btoa(JSON.stringify({ formData: doc.formData, documentHash: doc.documentHash, escrowAddr }));
   };
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -463,6 +506,44 @@ export default function ArbiterPage() {
                           </button>
                         </div>
                       </div>
+
+                      {/* Agreement Code + View Agreement */}
+                      {c.documentHash && (() => {
+                        const doc = loadDocFromStorage(c.documentHash);
+                        const agreementCode = doc ? getAgreementCode(c.documentHash, c.address) : null;
+                        const isExpanded = expandedAgreements.has(c.address);
+                        if (!doc) return null;
+                        return (
+                          <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
+                            <div className="flex gap-2 flex-wrap">
+                              <button
+                                onClick={() => setExpandedAgreements(prev => {
+                                  const next = new Set(prev);
+                                  isExpanded ? next.delete(c.address) : next.add(c.address);
+                                  return next;
+                                })}
+                                className="text-xs font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1 rounded transition-colors"
+                              >
+                                {isExpanded ? 'Hide Agreement' : 'View Agreement'}
+                              </button>
+                              {agreementCode && (
+                                <button
+                                  onClick={() => { navigator.clipboard.writeText(agreementCode); showToast('Agreement code copied'); }}
+                                  className="text-xs font-medium text-slate-500 hover:text-slate-700 border border-slate-200 px-3 py-1 rounded transition-colors"
+                                  title="Share this code with the Freelancer so they can import the agreement"
+                                >
+                                  Copy Agreement Code
+                                </button>
+                              )}
+                            </div>
+                            {isExpanded && (
+                              <pre className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
+                                {buildDocument(doc.formData)}
+                              </pre>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
@@ -470,54 +551,77 @@ export default function ArbiterPage() {
             </div>
           )}
 
-          {/* Pending Deals Queue */}
-          {pendingDeals.length > 0 && (
+          {/* Load Deal from Code + Pending Deals Queue */}
+          {isConnected && (
             <div className="mb-8 p-6 bg-indigo-50 rounded-lg border border-indigo-200">
-              <h2 className="text-lg font-semibold mb-4 text-indigo-800">Pending Deal Requests</h2>
-              <div className="space-y-3">
-                {pendingDeals.map((deal) => (
-                  <div key={deal.id} className="bg-white rounded-md border border-indigo-200 p-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-800 truncate">{deal.title}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          {deal.amount} PAS · Client: <span className="font-mono">{deal.clientAddress?.slice(0, 10)}…</span>
-                        </p>
-                      </div>
-                      <div className="flex gap-2 flex-shrink-0">
-                        <button
-                          onClick={() => setExpandedDeal(expandedDeal === deal.id ? null : deal.id)}
-                          className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded transition-colors"
-                        >
-                          {expandedDeal === deal.id ? 'Collapse' : 'Review'}
-                        </button>
-                        <button
-                          onClick={() => { prefillFromDeal(deal); setExpandedDeal(null); }}
-                          className="text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded transition-colors"
-                        >
-                          Deploy
-                        </button>
-                      </div>
-                    </div>
-
-                    {expandedDeal === deal.id && (
-                      <div className="mt-3 pt-3 border-t border-indigo-100 text-xs space-y-1.5">
-                        <div><span className="text-slate-500">Client:</span> <span className="font-mono text-slate-700 break-all">{deal.clientAddress}</span></div>
-                        <div><span className="text-slate-500">Freelancer:</span> <span className="font-mono text-slate-700 break-all">{deal.freelancerAddress}</span></div>
-                        <div><span className="text-slate-500">Amount:</span> <span className="font-semibold text-slate-700">{deal.amount} PAS</span></div>
-                        <div><span className="text-slate-500">Deadline:</span> <span className="text-slate-700">{deal.deadline}</span></div>
-                        {deal.deliverables && (
-                          <div>
-                            <span className="text-slate-500">Deliverables:</span>
-                            <p className="mt-1 text-slate-700 bg-slate-50 rounded p-2 whitespace-pre-wrap">{deal.deliverables}</p>
-                          </div>
-                        )}
-                        <div><span className="text-slate-500">Document Hash:</span> <span className="font-mono text-slate-700 break-all">{deal.documentHash}</span></div>
-                      </div>
-                    )}
-                  </div>
-                ))}
+              <h2 className="text-lg font-semibold mb-3 text-indigo-800">Load Deal from Code</h2>
+              <p className="text-xs text-indigo-600 mb-3">
+                Ask your Client to generate a deal code and paste it here. Only deals loaded by you are visible.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Paste deal code here…"
+                  value={dealCodeInput}
+                  onChange={(e) => setDealCodeInput(e.target.value)}
+                  className="flex-1 p-2 text-sm border border-indigo-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white text-slate-700"
+                />
+                <button
+                  onClick={handleDecodeDealCode}
+                  disabled={!dealCodeInput.trim()}
+                  className="text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md transition-colors disabled:bg-slate-400"
+                >
+                  Load
+                </button>
               </div>
+
+              {pendingDeals.length > 0 && (
+                <div className="mt-5 space-y-3">
+                  <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">Your Deal Queue</p>
+                  {pendingDeals.map((deal) => (
+                    <div key={deal.id} className="bg-white rounded-md border border-indigo-200 p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-800 truncate">{deal.title}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {deal.amount} PAS · Client: <span className="font-mono">{deal.clientAddress?.slice(0, 10)}…</span>
+                          </p>
+                        </div>
+                        <div className="flex gap-2 flex-shrink-0">
+                          <button
+                            onClick={() => setExpandedDeal(expandedDeal === deal.id ? null : deal.id)}
+                            className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded transition-colors"
+                          >
+                            {expandedDeal === deal.id ? 'Collapse' : 'Review'}
+                          </button>
+                          <button
+                            onClick={() => { prefillFromDeal(deal); setExpandedDeal(null); }}
+                            className="text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded transition-colors"
+                          >
+                            Deploy
+                          </button>
+                        </div>
+                      </div>
+
+                      {expandedDeal === deal.id && (
+                        <div className="mt-3 pt-3 border-t border-indigo-100 text-xs space-y-1.5">
+                          <div><span className="text-slate-500">Client:</span> <span className="font-mono text-slate-700 break-all">{deal.clientAddress}</span></div>
+                          <div><span className="text-slate-500">Freelancer:</span> <span className="font-mono text-slate-700 break-all">{deal.freelancerAddress}</span></div>
+                          <div><span className="text-slate-500">Amount:</span> <span className="font-semibold text-slate-700">{deal.amount} PAS</span></div>
+                          <div><span className="text-slate-500">Deadline:</span> <span className="text-slate-700">{deal.deadline}</span></div>
+                          {deal.deliverables && (
+                            <div>
+                              <span className="text-slate-500">Deliverables:</span>
+                              <p className="mt-1 text-slate-700 bg-slate-50 rounded p-2 whitespace-pre-wrap">{deal.deliverables}</p>
+                            </div>
+                          )}
+                          <div><span className="text-slate-500">Document Hash:</span> <span className="font-mono text-slate-700 break-all">{deal.documentHash}</span></div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -672,25 +776,8 @@ export default function ArbiterPage() {
             <div className="mt-8 p-6 bg-slate-50 rounded-lg border border-slate-200">
               <h2 className="text-xl font-semibold mb-1 text-slate-700">CPRA Compliance Ledger</h2>
               <p className="text-sm text-slate-500 mb-4">
-                Record each phase of the settlement to the on-chain audit trail. Requires the <strong>law firm admin</strong> wallet.
+                Record each phase of the settlement to the on-chain audit trail.
               </p>
-
-              {lawFirmAdmin && (
-                <div className={`mb-4 p-3 rounded-md border text-xs font-mono break-all ${
-                  isAdmin
-                    ? 'bg-green-50 border-green-200 text-green-800'
-                    : 'bg-amber-50 border-amber-200 text-amber-800'
-                }`}>
-                  {isAdmin ? (
-                    <span>Admin wallet connected. You can record to the ledger.</span>
-                  ) : (
-                    <span>
-                      Admin required: <strong>{lawFirmAdmin}</strong>
-                      <br />Switch MetaMask to this wallet to record ledger entries.
-                    </span>
-                  )}
-                </div>
-              )}
 
               <div className="rounded-md border border-slate-200 bg-white divide-y divide-slate-100">
                 <LedgerStepRow
@@ -698,28 +785,28 @@ export default function ArbiterPage() {
                   available={true}
                   done={ledgerDone.registered}
                   onAction={handleRegisterCase}
-                  disabled={isLedgerPending || !isAdmin}
+                  disabled={isLedgerPending}
                 />
                 <LedgerStepRow
                   label="2. Record Deposit"
                   available={!!isFunded}
                   done={ledgerDone.depositRecorded}
                   onAction={handleRecordDeposit}
-                  disabled={isLedgerPending || !isAdmin}
+                  disabled={isLedgerPending}
                 />
                 <LedgerStepRow
                   label="3. Record Disbursement"
                   available={!!isReleased}
                   done={ledgerDone.disbursementRecorded}
                   onAction={handleRecordDisbursement}
-                  disabled={isLedgerPending || !isAdmin}
+                  disabled={isLedgerPending}
                 />
                 <LedgerStepRow
                   label="4. Close Case"
                   available={ledgerDone.disbursementRecorded}
                   done={ledgerDone.closed}
                   onAction={handleCloseCase}
-                  disabled={isLedgerPending || !isAdmin}
+                  disabled={isLedgerPending}
                 />
               </div>
 

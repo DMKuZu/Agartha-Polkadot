@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import CryptoJS from 'crypto-js';
 
-interface RicardianFormData {
+export interface RicardianFormData {
   title: string;
   deliverables: string;
   deadline: string;
@@ -17,7 +17,7 @@ interface Props {
   onGenerated: (data: { documentHash: string; formData: RicardianFormData }) => void;
 }
 
-function buildDocument(f: RicardianFormData): string {
+export function buildDocument(f: RicardianFormData): string {
   return [
     'PHILIPPINE FREELANCE SERVICE AGREEMENT',
     '',
