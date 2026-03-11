@@ -4,11 +4,11 @@
 
 ---
 
-## Current Status: Days 15–16 of 21
+## Current Status: Day 17 of 21
 
-**Phase:** Connecting UI to Deployed Contracts
+**Phase:** Lawyer Dashboard + Polish
 
-The smart contracts are fully deployed on Sepolia testnet. The Next.js frontend has wallet connection, document hashing, and the case creation form wired to the factory contract. The current focus is completing the full UI-to-contract binding for all user flows.
+All core UI-to-contract bindings are complete. The full settlement flow (deploy → fund → approve → release) and CPRA ledger (register → deposit → disbursement → close) are wired in `page.tsx`. Next focus: lawyer dashboard read view (list all cases), then polish (toasts, network guard, ETH formatting).
 
 ---
 
@@ -52,8 +52,8 @@ ABIs exported to: `legal-escrow-dapp/src/contracts/abis.ts`
 
 | Day | Task | Status |
 |-----|------|--------|
-| 15–16 | Connect all UI buttons to contract functions | **In Progress** |
-| 17    | `remixd` local file sync (optional) | Pending |
+| 15–16 | Connect all UI buttons to contract functions | Done |
+| 17    | Lawyer dashboard read view + `remixd` sync (optional) | **In Progress** |
 | 18–19 | End-to-end settlement simulation | Pending |
 | 20–21 | UI polish, loading states, error handling, network guards | Pending |
 
@@ -201,10 +201,10 @@ useReadContract()                 // read escrow/ledger/factory state
 
 ## Week 3 Checklist
 
-- [ ] Parse `EscrowCreated` log to extract deployed escrow address after `createCase()`
-- [ ] Build `fund()` UI — client deposit page
-- [ ] Build `approveRelease()` UI — per-party approval with live approval count
-- [ ] Wire CPRA ledger: `registerCase` → `recordDeposit` → `recordDisbursement` → `closeCase`
+- [x] Parse `EscrowCreated` log to extract deployed escrow address after `createCase()`
+- [x] Build `fund()` UI — client deposit page
+- [x] Build `approveRelease()` UI — per-party approval with live approval count
+- [x] Wire CPRA ledger: `registerCase` → `recordDeposit` → `recordDisbursement` → `closeCase`
 - [ ] Build lawyer dashboard read view — list all cases with status
 - [ ] End-to-end settlement simulation (Days 18–19)
 - [ ] Loading states + tx success/failure toasts
@@ -221,3 +221,6 @@ useReadContract()                 // read escrow/ledger/factory state
 | 2026-03-10 | Local testing setup: added `backend/scripts/deploy.js`, `hardhat.config.js` localhost network, `hardhat` chain to `Web3Provider.tsx`, env var address resolution in `abis.ts`. |
 | 2026-03-11 | Created `requirements.md` with all library versions. Updated `README.md` with local + Sepolia testing instructions and end-to-end settlement flow. |
 | 2026-03-11 | Fixed `page.tsx`: address args now cast as `0x${string}`, added `isAddress` validation, inline address format errors, transaction error surface via `isError`/`error.message`, lawyer address displayed in UI. Added MetaMask nonce reset instructions to local testing section. |
+| 2026-03-11 | Completed Days 15–16 core wiring in `page.tsx`: `parseEventLogs` extracts escrow address from `EscrowCreated` receipt, `fund()` deposit section (Step 3), `approveRelease()` with live dot-progress indicator and per-wallet approval guard (Step 4), settlement complete screen (Step 5). Separate `useWriteContract` and `useWaitForTransactionReceipt` hooks for factory vs escrow. All escrow state refetches on tx confirmation. |
+| 2026-03-11 | Wired CPRA Ledger (Step 6) in `page.tsx`: 3rd `useWriteContract`/`useWaitForTransactionReceipt` for ledger txns; `lawFirmAdmin` read + `isAdmin` guard; deterministic `caseId = keccak256(escrowAddress)`; `casePurpose` form field; `ledgerDone` step-tracking state advanced by `useEffect` after each confirmed ledger tx; `LedgerStepRow` inline component; 4-step sequential UI (Register → Deposit → Disbursement → Close) with amber admin warning banner. Fixed TypeScript `unknown` → `ReactNode` error by casting all `useReadContract` data to explicit types. |
+| 2026-03-11 | Fixed `Web3Provider.tsx`: added explicit `transports` to `getDefaultConfig` — `hardhat` chain now uses `http('http://127.0.0.1:8545')`, `sepolia` uses `http()`. Without this, wagmi polled WalletConnect's cloud RPC for receipts instead of localhost, causing `useWaitForTransactionReceipt` to never resolve on Hardhat. |
