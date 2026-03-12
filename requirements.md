@@ -62,6 +62,7 @@ All library versions required to run the AgarthaTech Legal Escrow dApp.
 | `@tanstack/react-query` | ^5.90.21 |
 | `@walletconnect/ethereum-provider` | ^2.23.7 |
 | `crypto-js` | ^4.2.0 |
+| `@supabase/supabase-js` | ^2.49.0 |
 
 ### Dev Dependencies
 

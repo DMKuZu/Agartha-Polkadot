@@ -1,8 +1,7 @@
 'use client';
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import Link from 'next/link';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   useAccount,
   useWriteContract,
@@ -34,19 +33,21 @@ interface MyCaseItem {
   documentHash:  string  | undefined;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-const LEDGER_KEY = (addr: string) => `agartha_ledger_${addr.toLowerCase()}`;
-const BLANK_LEDGER: LedgerDone = { registered: false, depositRecorded: false, disbursementRecorded: false, closed: false };
-
-function loadLedgerProgress(addr: string): LedgerDone {
-  try {
-    const saved = localStorage.getItem(LEDGER_KEY(addr));
-    return saved ? JSON.parse(saved) : BLANK_LEDGER;
-  } catch {
-    return BLANK_LEDGER;
-  }
+interface PendingDealItem {
+  id: string;               // deal_code_id (Date.now().toString(36))
+  dbId: string;             // DB UUID — needed for PATCH /api/deals/[id]/deploy
+  clientAddress: string;
+  freelancerAddress: string;
+  amount: string;
+  title: string;
+  deliverables: string;
+  deadline: string;
+  documentHash: string;
 }
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const BLANK_LEDGER: LedgerDone = { registered: false, depositRecorded: false, disbursementRecorded: false, closed: false };
 
 export default function ArbiterPage() {
   const { address, isConnected } = useAccount();
@@ -92,21 +93,17 @@ export default function ArbiterPage() {
   const [casePurpose,      setCasePurpose]      = useState<string>('');
   const [validationError,  setValidationError]  = useState<string>('');
 
-  // ── Active escrow ─────────────────────────────────────────────────────────────
+  // ── Active escrow + current DB deal ──────────────────────────────────────────
 
   const [deployedEscrowAddress, setDeployedEscrowAddress] = useState<`0x${string}` | null>(null);
+  const [currentDealId, setCurrentDealId] = useState<string | null>(null);
 
   const caseId = deployedEscrowAddress ? keccak256(deployedEscrowAddress) : null;
 
-  // ── CPRA ledger step tracking (persisted per escrow in localStorage) ──────────
+  // ── CPRA ledger step tracking (persisted in DB) ───────────────────────────────
 
   const [currentLedgerStep, setCurrentLedgerStep] = useState<LedgerStep | null>(null);
   const [ledgerDone, setLedgerDone] = useState<LedgerDone>(BLANK_LEDGER);
-
-  useEffect(() => {
-    if (!deployedEscrowAddress) return;
-    localStorage.setItem(LEDGER_KEY(deployedEscrowAddress), JSON.stringify(ledgerDone));
-  }, [ledgerDone, deployedEscrowAddress]);
 
   // ── All cases from factory (on-chain) ─────────────────────────────────────────
 
@@ -156,15 +153,51 @@ export default function ArbiterPage() {
     })
     .filter((c) => c.lawyer?.toLowerCase() === address?.toLowerCase());
 
+  // ── Case agreements — fetched from DB by document hash ───────────────────────
+
+  const [expandedAgreements, setExpandedAgreements] = useState<Set<string>>(new Set());
+  const [caseAgreements, setCaseAgreements] = useState<Record<string, any>>({});
+
+  useEffect(() => {
+    const hashes = myCases.map(c => c.documentHash).filter(Boolean) as string[];
+    hashes.forEach(hash => {
+      if (caseAgreements[hash]) return;
+      fetch(`/api/deals/by-hash/${hash}`)
+        .then(r => r.json())
+        .then(({ deal }) => {
+          if (deal?.form_data) {
+            setCaseAgreements(prev => ({ ...prev, [hash]: deal.form_data as RicardianFormData }));
+          }
+        })
+        .catch(() => {});
+    });
+  }, [myCases.length]);
+
   // ── Load a case from on-chain history ─────────────────────────────────────────
 
-  const loadCase = (c: MyCaseItem) => {
+  const loadCase = async (c: MyCaseItem) => {
     setDeployedEscrowAddress(c.address);
     setBuyerAddress(c.buyer ?? '');
     setSellerAddress(c.seller ?? '');
     setSettlementAmount(c.settlementAmount !== undefined ? formatEther(c.settlementAmount) : '');
-    setLedgerDone(loadLedgerProgress(c.address));
     setCurrentLedgerStep(null);
+    setLedgerDone(BLANK_LEDGER);
+
+    // Load CPRA progress from DB
+    try {
+      const r = await fetch(`/api/ledger/${c.address}`);
+      const { progress } = await r.json();
+      if (progress) {
+        setLedgerDone({
+          registered:           progress.registered            ?? false,
+          depositRecorded:      progress.deposit_recorded      ?? false,
+          disbursementRecorded: progress.disbursement_recorded ?? false,
+          closed:               progress.closed                ?? false,
+        });
+      }
+    } catch {
+      // fallback to blank
+    }
   };
 
   // ── Parse EscrowCreated log when factory receipt arrives ─────────────────────
@@ -176,12 +209,18 @@ export default function ArbiterPage() {
       const escrowAddr = (logs[0] as any).args.escrowAddress as `0x${string}`;
       setDeployedEscrowAddress(escrowAddr);
       setLedgerDone(BLANK_LEDGER);
-      const escrowMap = JSON.parse(localStorage.getItem('agartha_escrow_map') || '{}');
-      escrowMap[buyerAddress.toLowerCase()] = escrowAddr;
-      localStorage.setItem('agartha_escrow_map', JSON.stringify(escrowMap));
       refetchAllEscrows();
       refetchAllCases();
       showToast('Contract deployed successfully');
+
+      // Persist escrow address to DB (best-effort)
+      if (currentDealId) {
+        fetch(`/api/deals/${currentDealId}/deploy`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ escrow_address: escrowAddr, arbiter_address: address }),
+        }).catch(() => {});
+      }
     }
   }, [factoryReceipt]);
 
@@ -223,11 +262,11 @@ export default function ArbiterPage() {
 
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
 
-  const showToast = (message: string, type: ToastEntry['type'] = 'success') => {
+  const showToast = useCallback((message: string, type: ToastEntry['type'] = 'success') => {
     const id = Date.now();
     setToasts(prev => [...prev, { id, message, type }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
-  };
+  }, []);
 
   useEffect(() => { if (isFactoryError) showToast('Deploy transaction failed', 'error'); }, [isFactoryError]);
   useEffect(() => { if (isEscrowError)  showToast('Transaction failed', 'error');         }, [isEscrowError]);
@@ -245,82 +284,95 @@ export default function ArbiterPage() {
   // ── Advance ledger step tracking after each ledger tx ────────────────────────
 
   useEffect(() => {
-    if (!isLedgerTxConfirmed || !currentLedgerStep) return;
-    setLedgerDone(prev => ({
-      ...prev,
-      registered:           prev.registered           || currentLedgerStep === 'register',
-      depositRecorded:      prev.depositRecorded       || currentLedgerStep === 'deposit',
-      disbursementRecorded: prev.disbursementRecorded  || currentLedgerStep === 'disburse',
-      closed:               prev.closed                || currentLedgerStep === 'close',
-    }));
+    if (!isLedgerTxConfirmed || !currentLedgerStep || !deployedEscrowAddress) return;
+
+    const next: LedgerDone = {
+      registered:           ledgerDone.registered           || currentLedgerStep === 'register',
+      depositRecorded:      ledgerDone.depositRecorded       || currentLedgerStep === 'deposit',
+      disbursementRecorded: ledgerDone.disbursementRecorded  || currentLedgerStep === 'disburse',
+      closed:               ledgerDone.closed                || currentLedgerStep === 'close',
+    };
+    setLedgerDone(next);
     showToast('Ledger entry recorded');
+
+    // Persist to DB
+    fetch(`/api/ledger/${deployedEscrowAddress}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        arbiter_address:       address,
+        registered:            next.registered,
+        deposit_recorded:      next.depositRecorded,
+        disbursement_recorded: next.disbursementRecorded,
+        closed:                next.closed,
+      }),
+    }).catch(() => {});
   }, [isLedgerTxConfirmed]);
 
-  // ── Pending deals (private per-browser, loaded from deal code) ───────────────
+  // ── Pending deals — fetched from DB ──────────────────────────────────────────
 
-  const [pendingDeals, setPendingDeals] = useState<any[]>([]);
+  const [pendingDeals, setPendingDeals] = useState<PendingDealItem[]>([]);
   const [expandedDeal, setExpandedDeal] = useState<string | null>(null);
   const [dealCodeInput, setDealCodeInput] = useState<string>('');
 
-  useEffect(() => {
-    const stored = JSON.parse(localStorage.getItem('agartha_my_pending_deals') || '[]');
-    setPendingDeals(stored);
-  }, []);
-
-  const handleDecodeDealCode = () => {
+  const fetchPendingDeals = useCallback(async () => {
+    if (!address) return;
     try {
-      const decoded = JSON.parse(atob(dealCodeInput.trim()));
-      if (!decoded.id || !decoded.clientAddress || !decoded.documentHash) throw new Error('Invalid code');
-      const existing: any[] = JSON.parse(localStorage.getItem('agartha_my_pending_deals') || '[]');
-      if (existing.find((d) => d.id === decoded.id)) {
-        showToast('Deal already in queue', 'error');
-        return;
-      }
-      // Save agreement data so arbiter can reconstruct the document
-      const formData: RicardianFormData = {
-        title: decoded.title || '',
-        deliverables: decoded.deliverables || '',
-        deadline: decoded.deadline || '',
-        amount: decoded.amount || '',
-        clientAddress: decoded.clientAddress || '',
-        freelancerAddress: decoded.freelancerAddress || '',
-      };
-      localStorage.setItem(`agartha_deal_doc_${decoded.documentHash}`, JSON.stringify({ formData, documentHash: decoded.documentHash }));
-      const updated = [...existing, decoded];
-      localStorage.setItem('agartha_my_pending_deals', JSON.stringify(updated));
-      setPendingDeals(updated);
+      const r = await fetch(`/api/deals?wallet_address=${address}`);
+      const { deals } = await r.json();
+      if (!Array.isArray(deals)) return;
+      const pending: PendingDealItem[] = deals
+        .filter((d: any) => !d.escrow_address)
+        .map((d: any) => ({
+          id:                d.deal_code_id,
+          dbId:              d.id,
+          clientAddress:     d.client_address,
+          freelancerAddress: d.freelancer_address,
+          amount:            d.form_data?.amount ?? '',
+          title:             d.form_data?.title ?? '',
+          deliverables:      d.form_data?.deliverables ?? '',
+          deadline:          d.form_data?.deadline ?? '',
+          documentHash:      d.document_hash,
+        }));
+      setPendingDeals(pending);
+    } catch {
+      // ignore
+    }
+  }, [address]);
+
+  useEffect(() => {
+    if (isConnected && address) fetchPendingDeals();
+  }, [isConnected, address, fetchPendingDeals]);
+
+  const handleDecodeDealCode = async () => {
+    if (!dealCodeInput.trim() || !address) return;
+    try {
+      const r = await fetch('/api/deals/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deal_code: dealCodeInput.trim(), arbiter_address: address }),
+      });
+      const data = await r.json();
+      if (r.status === 403) { showToast(data.error || 'Forbidden', 'error'); return; }
+      if (r.status === 409) { showToast('Deal already claimed by another arbiter', 'error'); return; }
+      if (!r.ok) { showToast(data.error || 'Invalid deal code', 'error'); return; }
       setDealCodeInput('');
       showToast('Deal loaded from code');
+      fetchPendingDeals();
     } catch {
       showToast('Invalid deal code', 'error');
     }
   };
 
-  const prefillFromDeal = (deal: any) => {
-    setBuyerAddress(deal.clientAddress || '');
-    setSellerAddress(deal.freelancerAddress || '');
-    setSettlementAmount(deal.amount || '');
-    setCasePurpose(deal.title || '');
-    setDocumentHash(deal.documentHash || '');
+  const prefillFromDeal = (deal: PendingDealItem) => {
+    setBuyerAddress(deal.clientAddress);
+    setSellerAddress(deal.freelancerAddress);
+    setSettlementAmount(deal.amount);
+    setCasePurpose(deal.title);
+    setDocumentHash(deal.documentHash);
+    setCurrentDealId(deal.dbId);
     setDeployedEscrowAddress(null);
     setLedgerDone(BLANK_LEDGER);
-  };
-
-  // ── Agreement viewing state ───────────────────────────────────────────────────
-
-  const [expandedAgreements, setExpandedAgreements] = useState<Set<string>>(new Set());
-
-  const loadDocFromStorage = (hash: string): { formData: RicardianFormData; documentHash: string } | null => {
-    try {
-      const saved = localStorage.getItem(`agartha_deal_doc_${hash}`);
-      return saved ? JSON.parse(saved) : null;
-    } catch { return null; }
-  };
-
-  const getAgreementCode = (docHash: string, escrowAddr: string): string | null => {
-    const doc = loadDocFromStorage(docHash);
-    if (!doc) return null;
-    return window.btoa(JSON.stringify({ formData: doc.formData, documentHash: doc.documentHash, escrowAddr }));
   };
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -416,12 +468,6 @@ export default function ArbiterPage() {
             <h1 className="text-3xl font-bold mb-3 text-slate-800">Arbiter Portal</h1>
             <p className="text-slate-500 mb-4">Review pending deals, deploy escrow contracts, and manage CPRA compliance.</p>
             <div className="flex justify-center mb-4"><ConnectButton /></div>
-            <div className="flex justify-center mb-4">
-              <Link href="/"
-                className="inline-block text-sm text-slate-500 hover:text-slate-700 border border-slate-200 px-3 py-1.5 rounded-md transition-colors">
-                ← Switch Role
-              </Link>
-            </div>
           </div>
 
           <hr className="border-slate-200 mb-8" />
@@ -507,39 +553,34 @@ export default function ArbiterPage() {
                         </div>
                       </div>
 
-                      {/* Agreement Code + View Agreement */}
-                      {c.documentHash && (() => {
-                        const doc = loadDocFromStorage(c.documentHash);
-                        const agreementCode = doc ? getAgreementCode(c.documentHash, c.address) : null;
+                      {/* View Agreement (from DB) */}
+                      {c.documentHash && caseAgreements[c.documentHash] && (() => {
+                        const formData = caseAgreements[c.documentHash];
                         const isExpanded = expandedAgreements.has(c.address);
-                        if (!doc) return null;
                         return (
-                          <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
-                            <div className="flex gap-2 flex-wrap">
-                              <button
-                                onClick={() => setExpandedAgreements(prev => {
-                                  const next = new Set(prev);
-                                  isExpanded ? next.delete(c.address) : next.add(c.address);
-                                  return next;
-                                })}
-                                className="text-xs font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1 rounded transition-colors"
-                              >
-                                {isExpanded ? 'Hide Agreement' : 'View Agreement'}
-                              </button>
-                              {agreementCode && (
-                                <button
-                                  onClick={() => { navigator.clipboard.writeText(agreementCode); showToast('Agreement code copied'); }}
-                                  className="text-xs font-medium text-slate-500 hover:text-slate-700 border border-slate-200 px-3 py-1 rounded transition-colors"
-                                  title="Share this code with the Freelancer so they can import the agreement"
-                                >
-                                  Copy Agreement Code
-                                </button>
-                              )}
-                            </div>
+                          <div className="mt-3 pt-3 border-t border-slate-200">
+                            <button
+                              onClick={() => setExpandedAgreements(prev => {
+                                const next = new Set(prev);
+                                isExpanded ? next.delete(c.address) : next.add(c.address);
+                                return next;
+                              })}
+                              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1 rounded transition-colors"
+                            >
+                              {isExpanded ? 'Hide Agreement' : 'View Agreement'}
+                            </button>
                             {isExpanded && (
-                              <pre className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
-                                {buildDocument(doc.formData)}
-                              </pre>
+                              formData?.type === 'file' ? (
+                                <div className="mt-2 bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 space-y-1">
+                                  <p className="font-semibold text-slate-800">{formData.filename}</p>
+                                  <p className="text-slate-500">Document hash (on-chain proof):</p>
+                                  <p className="font-mono text-slate-600 break-all">{c.documentHash}</p>
+                                </div>
+                              ) : (
+                                <pre className="mt-2 bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
+                                  {buildDocument(formData as RicardianFormData)}
+                                </pre>
+                              )
                             )}
                           </div>
                         );
@@ -704,8 +745,7 @@ export default function ArbiterPage() {
 
                 {isFactoryError && (
                   <div className="mt-2 p-4 bg-red-100 text-red-800 rounded-md border border-red-300">
-                    <p className="font-semibold">Transaction failed.</p>
-                    <p className="text-xs break-all mt-1 font-mono">{factoryError?.message}</p>
+                    <p className="font-semibold">Transaction failed. Please try again.</p>
                   </div>
                 )}
               </form>
@@ -755,8 +795,8 @@ export default function ArbiterPage() {
                 </button>
               )}
               {isEscrowError && (
-                <div className="mt-3 p-3 bg-red-100 text-red-800 rounded-md border border-red-300 text-xs font-mono break-all">
-                  {escrowError?.message}
+                <div className="mt-3 p-3 bg-red-100 text-red-800 rounded-md border border-red-300 text-xs">
+                  Transaction failed. Please try again.
                 </div>
               )}
             </div>
@@ -811,8 +851,8 @@ export default function ArbiterPage() {
               </div>
 
               {isLedgerError && (
-                <div className="mt-3 p-3 bg-red-100 text-red-800 rounded-md border border-red-300 text-xs font-mono break-all">
-                  {ledgerError?.message}
+                <div className="mt-3 p-3 bg-red-100 text-red-800 rounded-md border border-red-300 text-xs">
+                  Transaction failed. Please try again.
                 </div>
               )}
 

@@ -91,34 +91,29 @@ export default function FreelancerPage() {
     })
     .filter((c) => c.seller?.toLowerCase() === address?.toLowerCase());
 
+  // ── Agreement viewing — fetched silently from DB by document hash ─────────────
+
+  const [expandedAgreements, setExpandedAgreements] = useState<Set<string>>(new Set());
+  const [contractAgreements, setContractAgreements] = useState<Record<string, any>>({});
+
+  useEffect(() => {
+    const hashes = myContracts.map(c => c.documentHash).filter(Boolean) as string[];
+    hashes.forEach(hash => {
+      if (contractAgreements[hash]) return;
+      fetch(`/api/deals/by-hash/${hash}`)
+        .then(r => r.json())
+        .then(({ deal }) => {
+          if (deal?.form_data) {
+            setContractAgreements(prev => ({ ...prev, [hash]: deal.form_data as RicardianFormData }));
+          }
+        })
+        .catch(() => {});
+    });
+  }, [myContracts.length]);
+
   // ── Handlers ──────────────────────────────────────────────────────────────────
 
   const [pendingApproval, setPendingApproval] = useState<string | null>(null);
-
-  // ── Agreement viewing state ───────────────────────────────────────────────────
-
-  const [expandedAgreements, setExpandedAgreements] = useState<Set<string>>(new Set());
-  const [importInputs, setImportInputs] = useState<Record<string, string>>({});
-
-  const loadDocFromStorage = (hash: string): { formData: RicardianFormData; documentHash: string } | null => {
-    try {
-      const saved = localStorage.getItem(`agartha_deal_doc_${hash}`);
-      return saved ? JSON.parse(saved) : null;
-    } catch { return null; }
-  };
-
-  const handleImportAgreement = (hash: string, code: string) => {
-    try {
-      const decoded = JSON.parse(atob(code.trim()));
-      if (!decoded.formData || !decoded.documentHash) throw new Error('Invalid');
-      localStorage.setItem(`agartha_deal_doc_${decoded.documentHash}`, JSON.stringify(decoded));
-      setImportInputs(prev => ({ ...prev, [hash]: '' }));
-      setExpandedAgreements(prev => new Set([...prev, hash]));
-      showToast('Agreement imported');
-    } catch {
-      showToast('Invalid agreement code', 'error');
-    }
-  };
 
   const handleApprove = (escrowAddr: `0x${string}`) => {
     setPendingApproval(escrowAddr);
@@ -146,9 +141,6 @@ export default function FreelancerPage() {
               <p className="text-sm text-slate-500 mt-1">View your active contracts and approve payment release.</p>
             </div>
             <div className="flex items-center gap-3 flex-shrink-0">
-              <Link href="/" className="text-sm text-slate-500 hover:text-slate-700 border border-slate-200 px-3 py-1.5 rounded-md transition-colors">
-                ← Switch Role
-              </Link>
               <ConnectButton />
             </div>
           </div>
@@ -237,54 +229,36 @@ export default function FreelancerPage() {
                       </div>
                     </div>
 
-                    {/* Agreement viewing / import */}
-                    {c.documentHash && (() => {
-                      const doc = loadDocFromStorage(c.documentHash);
+                    {/* Agreement viewing — silent fetch, no import code needed */}
+                    {c.documentHash && contractAgreements[c.documentHash] && (() => {
+                      const formData = contractAgreements[c.documentHash];
                       const isExpanded = expandedAgreements.has(c.address);
                       return (
                         <div className="mt-3 mb-4 border-t border-slate-200 pt-3">
-                          {doc ? (
-                            <>
-                              <button
-                                onClick={() => setExpandedAgreements(prev => {
-                                  const next = new Set(prev);
-                                  isExpanded ? next.delete(c.address) : next.add(c.address);
-                                  return next;
-                                })}
-                                className="text-xs font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1 rounded transition-colors"
-                              >
-                                {isExpanded ? 'Hide Agreement' : 'View Agreement'}
-                              </button>
-                              {isExpanded && (
-                                <div className="mt-3">
-                                  <pre className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
-                                    {buildDocument(doc.formData)}
-                                  </pre>
-                                  <p className="text-xs text-slate-400 mt-1 font-mono break-all">Hash: {doc.documentHash}</p>
+                          <button
+                            onClick={() => setExpandedAgreements(prev => {
+                              const next = new Set(prev);
+                              isExpanded ? next.delete(c.address) : next.add(c.address);
+                              return next;
+                            })}
+                            className="text-xs font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1 rounded transition-colors"
+                          >
+                            {isExpanded ? 'Hide Agreement' : 'View Agreement'}
+                          </button>
+                          {isExpanded && (
+                            <div className="mt-3">
+                              {formData?.type === 'file' ? (
+                                <div className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 space-y-1">
+                                  <p className="font-semibold text-slate-800">{formData.filename}</p>
+                                  <p className="text-slate-500">Document hash (on-chain proof):</p>
+                                  <p className="font-mono text-slate-600 break-all">{c.documentHash}</p>
                                 </div>
+                              ) : (
+                                <pre className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
+                                  {buildDocument(formData as RicardianFormData)}
+                                </pre>
                               )}
-                            </>
-                          ) : (
-                            <div>
-                              <p className="text-xs text-slate-500 mb-2">
-                                Paste the Agreement Code from your Arbiter to view the contract:
-                              </p>
-                              <div className="flex gap-2">
-                                <input
-                                  type="text"
-                                  placeholder="Paste agreement code…"
-                                  value={importInputs[c.address] || ''}
-                                  onChange={(e) => setImportInputs(prev => ({ ...prev, [c.address]: e.target.value }))}
-                                  className="flex-1 p-1.5 text-xs border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white text-slate-700"
-                                />
-                                <button
-                                  onClick={() => handleImportAgreement(c.documentHash!, importInputs[c.address] || '')}
-                                  disabled={!importInputs[c.address]?.trim()}
-                                  className="text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded transition-colors disabled:bg-slate-400"
-                                >
-                                  Import
-                                </button>
-                              </div>
+                              <p className="text-xs text-slate-400 mt-1 font-mono break-all">Hash: {c.documentHash}</p>
                             </div>
                           )}
                         </div>
@@ -334,8 +308,8 @@ export default function FreelancerPage() {
                     )}
 
                     {isEscrowError && pendingApproval === c.address && (
-                      <div className="mt-2 p-2 bg-red-100 text-red-700 rounded text-xs font-mono break-all">
-                        {escrowError?.message}
+                      <div className="mt-2 p-2 bg-red-100 text-red-700 rounded text-xs">
+                        Transaction failed. Please try again.
                       </div>
                     )}
                   </div>

@@ -79,7 +79,7 @@ export function RicardianGenerator({ onGenerated }: Props) {
 
   const generate = () => {
     const doc = buildDocument(form);
-    const hash = '0x' + CryptoJS.SHA256(doc).toString();
+    const hash = '0x' + CryptoJS.SHA256(CryptoJS.enc.Utf8.parse(doc)).toString();
     setPreview(doc);
     setDocumentHash(hash);
     onGenerated({ documentHash: hash, formData: form });
@@ -129,6 +129,7 @@ export function RicardianGenerator({ onGenerated }: Props) {
             <input
               type="date"
               className="w-full p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black text-sm"
+              min={new Date().toISOString().split('T')[0]}
               value={form.deadline}
               onChange={(e) => update('deadline', e.target.value)}
             />

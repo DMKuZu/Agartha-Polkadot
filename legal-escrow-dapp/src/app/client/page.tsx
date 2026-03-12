@@ -1,8 +1,7 @@
 'use client';
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import Link from 'next/link';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   useAccount,
   useWriteContract,
@@ -11,9 +10,10 @@ import {
   useReadContracts,
 } from 'wagmi';
 import { parseEther, formatEther, isAddress } from 'viem';
+import CryptoJS from 'crypto-js';
 import { FACTORY_ADDRESS, FACTORY_ABI, ESCROW_ABI } from '../../contracts/abis';
 import { RoleGuard } from '../../components/RoleGuard';
-import { RicardianGenerator, buildDocument, RicardianFormData } from '../../components/RicardianGenerator';
+import { buildDocument, RicardianFormData } from '../../components/RicardianGenerator';
 
 type ToastEntry = { id: number; message: string; type: 'success' | 'error' };
 
@@ -27,6 +27,25 @@ interface MyDealItem {
   approvalCount:    bigint | undefined;
   hasApproved:      boolean | undefined;
   documentHash:     string | undefined;
+}
+
+// ── Agreement rendering helper ─────────────────────────────────────────────────
+
+function AgreementView({ formData, documentHash }: { formData: any; documentHash: string }) {
+  if (formData?.type === 'file') {
+    return (
+      <div className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 space-y-1">
+        <p className="font-semibold text-slate-800">{formData.filename}</p>
+        <p className="text-slate-500">Document hash (on-chain proof):</p>
+        <p className="font-mono text-slate-600 break-all">{documentHash}</p>
+      </div>
+    );
+  }
+  return (
+    <pre className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
+      {buildDocument(formData as RicardianFormData)}
+    </pre>
+  );
 }
 
 export default function ClientPage() {
@@ -128,49 +147,118 @@ export default function ClientPage() {
     writeEscrow({ address: addr, abi: ESCROW_ABI, functionName: 'approveRelease' });
   };
 
-  // ── Agreement viewing state ───────────────────────────────────────────────────
+  // ── Agreement viewing — fetched from DB by document hash ──────────────────────
 
   const [expandedAgreements, setExpandedAgreements] = useState<Set<string>>(new Set());
+  const [dealAgreements, setDealAgreements] = useState<Record<string, any>>({});
 
-  const loadDocFromStorage = (hash: string): { formData: RicardianFormData; documentHash: string } | null => {
-    try {
-      const saved = localStorage.getItem(`agartha_deal_doc_${hash}`);
-      return saved ? JSON.parse(saved) : null;
-    } catch { return null; }
-  };
+  useEffect(() => {
+    const hashes = myDeals.map(d => d.documentHash).filter(Boolean) as string[];
+    hashes.forEach(hash => {
+      if (dealAgreements[hash]) return;
+      fetch(`/api/deals/by-hash/${hash}`)
+        .then(r => r.json())
+        .then(({ deal }) => {
+          if (deal?.form_data) {
+            setDealAgreements(prev => ({ ...prev, [hash]: deal.form_data }));
+          }
+        })
+        .catch(() => {});
+    });
+  }, [myDeals.length]);
 
   // ── New deal form state ───────────────────────────────────────────────────────
 
   const [showNewDeal, setShowNewDeal] = useState(false);
-  const [documentHash, setDocumentHash] = useState<string>('');
-  const [dealFormData, setDealFormData] = useState<any>(null);
-  const [dealSubmitted, setDealSubmitted] = useState(false);
-  const [dealCode, setDealCode] = useState<string>('');
 
-  const handleAgreementGenerated = (data: { documentHash: string; formData: any }) => {
-    setDocumentHash(data.documentHash);
-    setDealFormData(data.formData);
+  // File upload
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName]     = useState('');
+  const [fileHash, setFileHash]     = useState('');
+  const [isHashing, setIsHashing]   = useState(false);
+
+  // Deal fields
+  const [freelancerAddress, setFreelancerAddress] = useState('');
+  const [settlementAmount,  setSettlementAmount]  = useState('');
+  const [dealTitle,         setDealTitle]         = useState('');
+  const [deliverables,      setDeliverables]      = useState('');
+  const [deadline,          setDeadline]          = useState('');
+
+  // Submission
+  const [dealSubmitted, setDealSubmitted] = useState(false);
+  const [dealCode,      setDealCode]      = useState('');
+  const [formError,     setFormError]     = useState('');
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setFileHash('');
+    setIsHashing(true);
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const wordArray = CryptoJS.lib.WordArray.create(evt.target?.result as ArrayBuffer);
+      const hash = '0x' + CryptoJS.SHA256(wordArray).toString(CryptoJS.enc.Hex);
+      setFileHash(hash);
+      setIsHashing(false);
+    };
+    reader.readAsArrayBuffer(file);
   };
 
-  const handleGenerateDealCode = () => {
-    if (!documentHash || !dealFormData || !address) return;
-    if (!isAddress(dealFormData.freelancerAddress)) return showToast('Invalid freelancer address', 'error');
+  const handleGenerateDealCode = async () => {
+    setFormError('');
+    if (!fileHash)                        return setFormError('Upload a contract file first.');
+    if (!isAddress(freelancerAddress))    return setFormError('Freelancer address is not a valid Ethereum address.');
+    if (!settlementAmount || parseFloat(settlementAmount) <= 0)
+                                          return setFormError('Enter a valid settlement amount greater than 0.');
+    if (!dealTitle.trim())                return setFormError('Enter a deal title.');
+    if (!address) return;
+
     const id = Date.now().toString(36);
+    const formData = {
+      type:              'file',
+      filename:          fileName,
+      freelancerAddress,
+      amount:            settlementAmount,
+      title:             dealTitle,
+      deliverables,
+      deadline,
+    };
     const deal = {
       id,
       clientAddress:     address,
-      freelancerAddress: dealFormData.freelancerAddress,
-      amount:            dealFormData.amount,
-      title:             dealFormData.title,
-      deliverables:      dealFormData.deliverables,
-      deadline:          dealFormData.deadline,
-      documentHash,
+      freelancerAddress,
+      amount:            settlementAmount,
+      title:             dealTitle,
+      deliverables,
+      deadline,
+      documentHash:      fileHash,
     };
-    // Persist form data locally so this client can view the agreement later (Issue 2)
-    localStorage.setItem(`agartha_deal_doc_${documentHash}`, JSON.stringify({ formData: dealFormData, documentHash }));
-    setDealCode(window.btoa(JSON.stringify(deal)));
+    const code = window.btoa(JSON.stringify(deal));
+    setDealCode(code);
     setDealSubmitted(true);
     showToast('Deal code generated — share it with your Arbiter');
+
+    // Persist deal to DB (best-effort — arbiter claim is the fallback)
+    fetch('/api/deals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_address:    address,
+        freelancer_address: freelancerAddress,
+        document_hash:     fileHash,
+        form_data:         formData,
+        deal_code_id:      id,
+      }),
+    }).catch(() => {});
+  };
+
+  const resetNewDeal = () => {
+    setFileName(''); setFileHash(''); setIsHashing(false);
+    setFreelancerAddress(''); setSettlementAmount(''); setDealTitle('');
+    setDeliverables(''); setDeadline('');
+    setDealSubmitted(false); setDealCode(''); setFormError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -185,11 +273,6 @@ export default function ClientPage() {
             <h1 className="text-3xl font-bold mb-3 text-slate-800">Client Portal</h1>
             <p className="text-slate-500 mb-4">Manage your agreements and escrow payments.</p>
             <div className="flex justify-center mb-4"><ConnectButton /></div>
-            <div className="flex justify-center mb-4">
-              <Link href="/" className="inline-block text-sm text-slate-500 hover:text-slate-700 border border-slate-200 px-3 py-1.5 rounded-md transition-colors">
-                ← Switch Role
-              </Link>
-            </div>
           </div>
 
           <hr className="border-slate-200 mb-8" />
@@ -308,10 +391,9 @@ export default function ClientPage() {
                       )}
 
                       {/* View Agreement */}
-                      {d.documentHash && (() => {
-                        const doc = loadDocFromStorage(d.documentHash);
+                      {d.documentHash && dealAgreements[d.documentHash] && (() => {
+                        const formData = dealAgreements[d.documentHash];
                         const isExpanded = expandedAgreements.has(d.address);
-                        if (!doc) return null;
                         return (
                           <div className="mt-2 border-t border-slate-200 pt-2">
                             <button
@@ -326,10 +408,8 @@ export default function ClientPage() {
                             </button>
                             {isExpanded && (
                               <div className="mt-2">
-                                <pre className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
-                                  {buildDocument(doc.formData)}
-                                </pre>
-                                <p className="text-xs text-slate-400 mt-1 font-mono break-all">Hash: {doc.documentHash}</p>
+                                <AgreementView formData={formData} documentHash={d.documentHash} />
+                                <p className="text-xs text-slate-400 mt-1 font-mono break-all">Hash: {d.documentHash}</p>
                               </div>
                             )}
                           </div>
@@ -337,8 +417,8 @@ export default function ClientPage() {
                       })()}
 
                       {isEscrowError && pendingAction === d.address && (
-                        <div className="mt-2 p-2 bg-red-100 text-red-700 rounded text-xs font-mono break-all">
-                          {escrowError?.message}
+                        <div className="mt-2 p-2 bg-red-100 text-red-700 rounded text-xs">
+                          Transaction failed. Please try again.
                         </div>
                       )}
                     </div>
@@ -350,7 +430,7 @@ export default function ClientPage() {
 
           <hr className="border-slate-200 mb-6" />
 
-          {/* New Deal — create + submit for arbiter review */}
+          {/* New Deal — file upload + deal fields */}
           {isConnected && (
             <div>
               <button
@@ -361,55 +441,162 @@ export default function ClientPage() {
                 <span className="text-xs text-indigo-500">{showNewDeal ? 'Collapse ▲' : 'Expand ▼'}</span>
               </button>
 
-              {showNewDeal && (
-                <div className="mt-4">
-                  {/* Step 1: Generate Agreement */}
-                  <RicardianGenerator onGenerated={handleAgreementGenerated} />
+              {showNewDeal && !dealSubmitted && (
+                <div className="mt-4 space-y-5">
 
-                  {/* Step 2: Generate Deal Code */}
-                  {documentHash && !dealSubmitted && (
-                    <div className="mt-6 p-6 bg-slate-50 rounded-lg border border-slate-200">
-                      <h2 className="text-lg font-semibold mb-1 text-slate-700">Generate Deal Code</h2>
-                      <p className="text-sm text-slate-500 mb-4">
-                        Your agreement is hashed and ready. Generate a deal code and share it with your Arbiter through your own secure channel.
-                      </p>
-                      <button
-                        onClick={handleGenerateDealCode}
-                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-md transition-colors"
-                      >
-                        Generate Deal Code
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Deal code display */}
-                  {dealSubmitted && (
-                    <div className="mt-6 p-5 bg-indigo-50 border border-indigo-200 rounded-lg">
-                      <p className="font-semibold text-indigo-800 mb-2">Deal code generated.</p>
-                      <p className="text-xs text-indigo-600 mb-3">
-                        Copy this code and send it to your Arbiter. They will paste it into the Arbiter Portal to load your deal.
-                      </p>
-                      <textarea
-                        readOnly
-                        value={dealCode}
-                        rows={4}
-                        className="w-full font-mono text-xs bg-white border border-indigo-200 rounded-md p-3 text-slate-700 resize-none focus:outline-none"
-                        onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                  {/* Step 1 — Upload contract file */}
+                  <div className="p-5 bg-slate-50 rounded-lg border border-slate-200">
+                    <h2 className="text-lg font-semibold mb-1 text-slate-700">1. Upload Contract File</h2>
+                    <p className="text-sm text-slate-500 mb-3">
+                      Upload your signed contract document. The file is hashed locally — it is never uploaded to any server.
+                    </p>
+                    <label className="block">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        onChange={handleFileChange}
+                        className="block w-full text-sm text-slate-600
+                          file:mr-3 file:py-2 file:px-4
+                          file:rounded-md file:border-0
+                          file:text-sm file:font-semibold
+                          file:bg-indigo-600 file:text-white
+                          hover:file:bg-indigo-700 file:cursor-pointer cursor-pointer"
                       />
-                      <button
-                        onClick={() => { navigator.clipboard.writeText(dealCode); showToast('Code copied to clipboard'); }}
-                        className="mt-2 text-xs font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1.5 rounded transition-colors"
-                      >
-                        Copy to Clipboard
-                      </button>
-                      <button
-                        onClick={() => { setDealSubmitted(false); setDocumentHash(''); setDealFormData(null); setDealCode(''); }}
-                        className="mt-3 ml-3 text-xs text-indigo-500 hover:text-indigo-700 underline"
-                      >
-                        Create another deal
-                      </button>
+                    </label>
+                    {isHashing && (
+                      <p className="text-xs text-slate-500 mt-2">Computing SHA-256…</p>
+                    )}
+                    {fileHash && (
+                      <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md">
+                        <p className="text-xs font-semibold text-green-800 mb-1">{fileName}</p>
+                        <p className="text-xs text-green-700 font-mono break-all">{fileHash}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Step 2 — Deal details */}
+                  <div className="p-5 bg-slate-50 rounded-lg border border-slate-200">
+                    <h2 className="text-lg font-semibold mb-4 text-slate-700">2. Deal Details</h2>
+
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Deal Title <span className="text-red-500">*</span></label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Website Redesign — Phase 1"
+                          value={dealTitle}
+                          onChange={(e) => setDealTitle(e.target.value)}
+                          className="w-full p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-400 text-slate-800 text-sm"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Freelancer Wallet Address <span className="text-red-500">*</span></label>
+                        <input
+                          type="text"
+                          placeholder="0x…"
+                          value={freelancerAddress}
+                          onChange={(e) => setFreelancerAddress(e.target.value.trim())}
+                          className="w-full p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-400 text-slate-800 font-mono text-sm"
+                        />
+                        {freelancerAddress && !isAddress(freelancerAddress) && (
+                          <p className="text-xs text-red-500 mt-1">Invalid address format.</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Settlement Amount (PAS) <span className="text-red-500">*</span></label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="e.g. 2.5"
+                          value={settlementAmount}
+                          onChange={(e) => setSettlementAmount(e.target.value)}
+                          className="w-full p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-400 text-slate-800 text-sm"
+                        />
+                        <p className="text-xs text-slate-400 mt-1">
+                          This amount will be locked in the escrow contract and released to the Freelancer upon 2/3 approval.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Deliverables</label>
+                        <textarea
+                          placeholder="Describe what the Freelancer is expected to deliver…"
+                          value={deliverables}
+                          onChange={(e) => setDeliverables(e.target.value)}
+                          rows={3}
+                          className="w-full p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-400 text-slate-800 text-sm resize-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Deadline</label>
+                        <input
+                          type="date"
+                          min={new Date().toISOString().split('T')[0]}
+                          value={deadline}
+                          onChange={(e) => setDeadline(e.target.value)}
+                          className="w-full p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-400 text-slate-800 text-sm"
+                        />
+                      </div>
                     </div>
-                  )}
+                  </div>
+
+                  {/* Step 3 — Generate deal code */}
+                  <div className="p-5 bg-slate-50 rounded-lg border border-slate-200">
+                    <h2 className="text-lg font-semibold mb-1 text-slate-700">3. Generate Deal Code</h2>
+                    <p className="text-sm text-slate-500 mb-4">
+                      Creates a code that encodes your deal details. Share it with your Arbiter through your own secure channel.
+                    </p>
+
+                    {formError && (
+                      <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
+                        {formError}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={handleGenerateDealCode}
+                      disabled={!fileHash || isHashing}
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-md transition-colors disabled:bg-slate-400"
+                    >
+                      {isHashing ? 'Hashing file…' : 'Generate Deal Code'}
+                    </button>
+                  </div>
+
+                </div>
+              )}
+
+              {/* Deal code display */}
+              {showNewDeal && dealSubmitted && (
+                <div className="mt-4 p-5 bg-indigo-50 border border-indigo-200 rounded-lg">
+                  <p className="font-semibold text-indigo-800 mb-1">Deal code generated.</p>
+                  <p className="text-xs text-indigo-600 mb-3">
+                    Copy this code and send it to your Arbiter. They will paste it into the Arbiter Portal to load your deal.
+                  </p>
+                  <textarea
+                    readOnly
+                    value={dealCode}
+                    rows={4}
+                    className="w-full font-mono text-xs bg-white border border-indigo-200 rounded-md p-3 text-slate-700 resize-none focus:outline-none"
+                    onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                  />
+                  <div className="mt-2 flex gap-2 flex-wrap">
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(dealCode); showToast('Code copied to clipboard'); }}
+                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1.5 rounded transition-colors"
+                    >
+                      Copy to Clipboard
+                    </button>
+                    <button
+                      onClick={resetNewDeal}
+                      className="text-xs text-indigo-500 hover:text-indigo-700 underline px-1"
+                    >
+                      Create another deal
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

@@ -1,5 +1,27 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Supabase Setup
+
+This app uses Supabase for user profiles, deal persistence, and CPRA ledger state.
+
+### 1. Run the SQL schema
+
+In your Supabase project → SQL Editor, run the schema from `CONTEXT_STATUS.md` (tables: `users`, `deals`, `cpra_ledger_progress`).
+
+### 2. Set environment variables
+
+Add to `.env.local`:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://<your-project>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon public key — Project Settings → API>
+SUPABASE_SERVICE_ROLE_KEY=<service_role secret — Project Settings → API>
+```
+
+> `SUPABASE_SERVICE_ROLE_KEY` is only used server-side in API routes. Never expose it client-side.
+
+---
+
 ## Getting Started
 
 First, run the development server:

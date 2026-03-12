@@ -25,12 +25,23 @@ async function main() {
   const ledgerAddress = await ledger.getAddress();
   console.log("CPRALedger deployed to:", ledgerAddress);
 
-  // Write .env.local to the frontend
+  // Write .env.local to the frontend — preserve existing vars, only update contract addresses
   const envPath = path.join(__dirname, "../../legal-escrow-dapp/.env.local");
-  fs.writeFileSync(
-    envPath,
-    `NEXT_PUBLIC_FACTORY_ADDRESS=${factoryAddress}\nNEXT_PUBLIC_LEDGER_ADDRESS=${ledgerAddress}\n`
-  );
+  let existing = "";
+  if (fs.existsSync(envPath)) {
+    existing = fs.readFileSync(envPath, "utf8");
+  }
+  // Replace or append each key
+  function setEnvVar(content, key, value) {
+    const regex = new RegExp(`^${key}=.*$`, "m");
+    if (regex.test(content)) {
+      return content.replace(regex, `${key}=${value}`);
+    }
+    return content.trimEnd() + `\n${key}=${value}\n`;
+  }
+  let updated = setEnvVar(existing, "NEXT_PUBLIC_FACTORY_ADDRESS", factoryAddress);
+  updated = setEnvVar(updated, "NEXT_PUBLIC_LEDGER_ADDRESS", ledgerAddress);
+  fs.writeFileSync(envPath, updated);
 
   console.log("\n.env.local written:");
   console.log("  NEXT_PUBLIC_FACTORY_ADDRESS=" + factoryAddress);

@@ -82,20 +82,37 @@ legal-escrow-dapp/
 ├── src/
 │   ├── app/
 │   │   ├── layout.tsx                Root layout — Web3Provider wrapper
-│   │   ├── page.tsx                  Onboarding — wallet connect + role selector
+│   │   ├── page.tsx                  Onboarding — wallet connect + role selector (DB registration)
+│   │   ├── api/
+│   │   │   ├── users/
+│   │   │   │   ├── register/route.ts POST — register wallet+role; 409 on conflict
+│   │   │   │   └── [wallet_address]/
+│   │   │   │       └── route.ts      GET — fetch registered role for wallet
+│   │   │   ├── deals/
+│   │   │   │   ├── route.ts          POST create deal / GET list by wallet
+│   │   │   │   ├── claim/route.ts    POST — arbiter claims deal via deal code
+│   │   │   │   ├── by-hash/
+│   │   │   │   │   └── [document_hash]/route.ts  GET form_data by on-chain hash
+│   │   │   │   └── [id]/
+│   │   │   │       └── deploy/route.ts  PATCH — set escrow_address after factory deploy
+│   │   │   └── ledger/
+│   │   │       └── [escrow_address]/route.ts  GET+PUT CPRA step flags
 │   │   ├── arbiter/
-│   │   │   └── page.tsx              Arbiter workflow — pending review queue, deploy, CPRA ledger
+│   │   │   └── page.tsx              Arbiter workflow — pending review queue (DB), deploy, CPRA ledger (DB)
 │   │   ├── client/
-│   │   │   └── page.tsx              Client workflow — create deal, fund escrow, approve
+│   │   │   └── page.tsx              Client workflow — create deal (DB), fund escrow, approve
 │   │   ├── freelancer/
-│   │   │   └── page.tsx              Freelancer workflow — view contracts, approve release
+│   │   │   └── page.tsx              Freelancer workflow — view contracts, approve release (agreement via DB)
 │   │   ├── dashboard/
 │   │   │   └── page.tsx              Shared read-only all-cases view (all roles)
 │   │   └── globals.css
 │   ├── components/
 │   │   ├── Web3Provider.tsx          Wagmi + RainbowKit + TanStack Query config (Hardhat + Sepolia + Paseo)
-│   │   ├── RoleGuard.tsx             localStorage role guard — redirects unauthenticated users to onboarding
+│   │   ├── RoleGuard.tsx             DB role guard — redirects unauthenticated users to onboarding
 │   │   └── RicardianGenerator.tsx    Philippine FSA template form → rendered doc → SHA256 hash
+│   ├── lib/
+│   │   └── supabase/
+│   │       └── server.ts             Supabase admin client (service role) — API routes only
 │   └── contracts/
 │       └── abis.ts                   All ABIs + deployed addresses
 
@@ -113,15 +130,20 @@ backend/
 
 ---
 
-## localStorage Keys (Role Coordination — No Backend)
+## localStorage Keys
 
 | Key | Written by | Read by | Content |
 |-----|-----------|---------|---------|
-| `agartha_role` | Onboarding page | RoleGuard, all pages | `'client' \| 'freelancer' \| 'arbiter'` |
-| `agartha_my_pending_deals` | Arbiter page (on code paste) | Arbiter page | `Array<dealObject>` — private per-browser arbiter queue (replaces shared `agartha_pending_deals`) |
-| `agartha_escrow_map` | Arbiter page (after deploy) | Client page | `Record<clientAddress, escrowAddress>` |
-| `agartha_ledger_<escrowAddr>` | Arbiter page (after each ledger tx) | Arbiter page (on loadCase) | `{ registered, depositRecorded, disbursementRecorded, closed }` — one key per escrow address |
-| `agartha_deal_doc_<documentHash>` | Client (on code generate), Arbiter (on code paste) | All three role pages | `{ formData: RicardianFormData, documentHash: string }` — enables agreement viewing per escrow |
+| `agartha_role` | Onboarding page, RoleGuard | RoleGuard, all pages | `'client' \| 'freelancer' \| 'arbiter'` — **cache only**; DB is authoritative |
+
+**Removed keys (now in Supabase DB):**
+
+| Key removed | Replaced by |
+|-------------|-------------|
+| `agartha_my_pending_deals` | `deals` table rows where `LOWER(arbiter_address) = wallet` |
+| `agartha_deal_doc_<documentHash>` | `deals.form_data` via `GET /api/deals/by-hash/[hash]` |
+| `agartha_ledger_<escrowAddr>` | `cpra_ledger_progress` via `GET/PUT /api/ledger/[addr]` |
+| `agartha_escrow_map` | `deals.escrow_address` via `PATCH /api/deals/[id]/deploy` |
 
 ---
 
@@ -174,6 +196,7 @@ Do this once per `npx hardhat node` session before submitting any transactions.
 | Web3 Hooks | Wagmi 2, viem 2 |
 | Wallet UI | RainbowKit 2 |
 | Data Fetching | TanStack React Query 5 |
+| Database | Supabase (PostgreSQL) — users, deals, CPRA ledger |
 | Document Hashing | crypto-js (browser-side SHA256) |
 | Network | Hardhat localhost (31337) + Sepolia testnet + Polkadot EVM Testnet (420420417) |
 
@@ -264,3 +287,4 @@ useSwitchChain()                  // network guard
 | 2026-03-12 | Week 4 PRD alignment complete. All phases done: terminology rename (ETH→PAS, Buyer→Client, Seller→Freelancer, Lawyer→Arbiter), onboarding role-selector page, RoleGuard, RicardianGenerator (Philippine FSA template + SHA256), Client/Freelancer/Arbiter role pages, pending deals queue in Arbiter. Polkadot EVM Testnet added to Web3Provider (chain ID 420420417, RPC https://eth-rpc-testnet.polkadot.io/, PAS currency). |
 | 2026-03-12 | Bug fixes across all role pages: removed Fund Escrow from Arbiter (Client-only); rewrote Arbiter/Client pages to load on-chain history via `getDeployedEscrows()` + `useReadContracts` batch reads filtered by `lawyer`/`buyer` — persistent across page refreshes; added CPRA ledger progress persistence per escrow (`agartha_ledger_<addr>` localStorage); added `lawyer` field to Freelancer batch reads (8 reads/escrow); dashboard privacy: `truncAddr()` helper, settlement amounts hidden as "Confidential". TypeScript check passes with 0 errors. |
 | 2026-03-12 | Issue fix sprint (4 issues): (1) Deal code gating — Client generates `btoa(JSON.stringify(deal))` instead of writing to shared localStorage; Arbiter pastes code to decode + adds to private `agartha_my_pending_deals`; saves `agartha_deal_doc_<hash>` for agreement viewing. (2) Agreement viewing — exported `buildDocument` + `RicardianFormData` from RicardianGenerator; all three role pages batch-read `documentHash` on-chain (+1 read/escrow); View Agreement button when doc in localStorage; Import Agreement via agreement code (base64) for Freelancer; Arbiter "Copy Agreement Code" button per case card. (3) CPRALedger.sol rewritten — added `ILegalEscrow` interface, `caseRegistrar` mapping, `onlyCaseRegistrar` modifier; `registerCase` validates `keccak256(escrowAddr) == caseId` + `ILegalEscrow(escrow).lawyer() == msg.sender`; removed deployer-only restriction; `abis.ts` updated with `caseRegistrar` view function; Arbiter page admin guard + banner removed. (4) Dashboard — strips to `keccak256(escrowAddr)` (truncated) + status badge only; landing page adds "View Global Case Ledger →" link; dashboard links removed from client/arbiter pages. TypeScript check: 0 errors. |
+| 2026-03-12 | Supabase database integration. Replaced all localStorage deal/role/CPRA state with durable Supabase PostgreSQL backend. New DB tables: `users` (one wallet = one role, enforced at DB + API level), `deals` (client creates → arbiter claims via deal code → arbiter deploys → escrow_address set), `cpra_ledger_progress` (monotonic boolean steps, survives browser clears). New: `src/lib/supabase/server.ts` (service-role admin client, server-only); 7 API routes under `src/app/api/` (users/register, users/[wallet], deals, deals/claim, deals/by-hash/[hash], deals/[id]/deploy, ledger/[addr]). Updated: all 3 role pages + RoleGuard + onboarding page + requirements.md + README.md. Role conflict prevention at claim time (403 if arbiter = client or freelancer). Freelancer "Import Agreement Code" UI removed — agreement auto-fetched silently by documentHash. localStorage keys removed: `agartha_my_pending_deals`, `agartha_deal_doc_*`, `agartha_ledger_*`, `agartha_escrow_map`. `agartha_role` kept as performance cache. |
