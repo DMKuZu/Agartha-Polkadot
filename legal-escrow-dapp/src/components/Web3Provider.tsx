@@ -4,7 +4,6 @@ import '@rainbow-me/rainbowkit/styles.css';
 import { getDefaultConfig, RainbowKitProvider } from '@rainbow-me/rainbowkit';
 import { WagmiProvider } from 'wagmi';
 import { http } from 'wagmi';
-import { sepolia, hardhat } from 'wagmi/chains';
 import { defineChain } from 'viem';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 
@@ -28,11 +27,9 @@ const paseoEvm = defineChain({
 const config = getDefaultConfig({
   appName: 'AgarthaTech Legal Escrow',
   projectId: 'f963666ec968efcfbbae97622213c69c',
-  chains: [paseoEvm, hardhat, sepolia],
+  chains: [paseoEvm],
   transports: {
     [paseoEvm.id]: http('https://eth-rpc-testnet.polkadot.io/'),
-    [hardhat.id]: http('http://127.0.0.1:8545'),
-    [sepolia.id]: http(),
   },
   ssr: true,
 });

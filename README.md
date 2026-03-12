@@ -53,6 +53,8 @@ npm install
 
 ## Testing Locally (MetaMask + Hardhat)
 
+> **Note:** The frontend's Web3Provider is configured for **Polkadot EVM Testnet only**. The steps below are for local smart contract development and testing. To run the full frontend against Hardhat, add `hardhat` back to the `chains` array in `src/components/Web3Provider.tsx`.
+
 ### Step 1 — Add Hardhat network to MetaMask (one-time)
 
 Open MetaMask → Settings → Networks → Add a network manually:
@@ -112,26 +114,58 @@ MetaMask → click the account → three-dot menu → Settings → Advanced → 
 
 ## Testing on Sepolia Testnet
 
-If `.env.local` is absent, the app falls back to the already-deployed Sepolia contracts automatically.
+> **Note:** The frontend is now configured for Polkadot EVM Testnet only. Sepolia is no longer in the active Web3Provider config. To test on Sepolia, add `sepolia` back to the `chains` array in `src/components/Web3Provider.tsx` and set `NEXT_PUBLIC_FACTORY_ADDRESS` / `NEXT_PUBLIC_LEDGER_ADDRESS` to the deployed Sepolia addresses.
 
-1. Switch MetaMask to the **Sepolia** network
-2. Get Sepolia ETH from a faucet
-3. Run the frontend: `cd legal-escrow-dapp && npm run dev`
-
-**Deployed Sepolia addresses:**
+**Previously deployed Sepolia addresses (stale — CPRA self-registration support removed):**
 - `LegalFactory`: `0x688c0611a5691B7c1F09a694bf4ADfb456a58Cf7`
-- `CPRALedger`: `0x4815A8Ba613a3eB21A920739dE4cA7C439c7e1b1` ⚠️ stale — this is the old contract without self-registering arbiter support; redeploy with `npx hardhat run scripts/deploy.js --network sepolia` and update `.env.local` to use CPRA ledger features on Sepolia
+- `CPRALedger`: `0x4815A8Ba613a3eB21A920739dE4cA7C439c7e1b1`
 
 ---
 
-## Testing on Polkadot Paseo Testnet
+## Deploying and Testing on Polkadot Paseo Testnet
 
-> Paseo Testnet chain details — see `requirements.md` for RPC URL and chain ID.
+The frontend targets Polkadot EVM Testnet. Use this to deploy contracts and run the app end-to-end.
 
-1. Add the Paseo EVM network to MetaMask using the details in `requirements.md`
-2. Get PAS testnet tokens from the Paseo faucet
-3. Deploy contracts to Paseo (add network entry to `hardhat.config.js`)
-4. Run the frontend: `cd legal-escrow-dapp && npm run dev`
+### Step 1 — Get PAS testnet tokens
+
+Visit the Paseo faucet and fund your deployer wallet with PAS.
+
+### Step 2 — Add deployer key to backend
+
+Create `backend/.env`:
+```
+DEPLOYER_PRIVATE_KEY=0x<your_deployer_private_key>
+```
+
+`hardhat.config.js` reads this key for the `polkadotTestnet` network entry automatically.
+
+### Step 3 — Deploy contracts
+
+```bash
+cd backend
+npx hardhat run scripts/deploy.js --network polkadotTestnet
+```
+
+This deploys `LegalFactory` and `CPRALedger` to Paseo Testnet and auto-writes their addresses to `legal-escrow-dapp/.env.local`, preserving any existing keys (Supabase credentials).
+
+### Step 4 — Add Polkadot EVM Testnet to MetaMask (one-time)
+
+| Field | Value |
+|-------|-------|
+| Network Name | Polkadot EVM Testnet |
+| RPC URL | `https://eth-rpc-testnet.polkadot.io/` |
+| Chain ID | `420420417` |
+| Currency Symbol | `PAS` |
+| Block Explorer | `https://blockscout-testnet.polkadot.io` |
+
+### Step 5 — Start the frontend
+
+```bash
+cd legal-escrow-dapp
+npm run dev
+```
+
+Open `http://localhost:3000`. MetaMask should show **Polkadot EVM Testnet**.
 
 ---
 
@@ -148,10 +182,11 @@ All three parties open `http://localhost:3000`, connect their wallet, and select
 
 ### 3. Arbiter reviews and deploys (`/arbiter`)
 - Arbiter pastes the deal code into the "Load Deal from Code" input and clicks **Load**
-- The deal appears in the Arbiter's private queue — only this browser/device can see it
+- The deal is saved to the Supabase `deals` table and appears in the Arbiter's pending queue
 - Arbiter expands the deal to read the full contract terms, then clicks **Deploy** to pre-fill the deploy form
 - Arbiter clicks **Deploy Smart Contract** — calls `Factory.createCase()` on-chain
-- After deployment, the case card shows a **Copy Agreement Code** button — Arbiter shares this code with the Freelancer so they can view the signed contract terms
+- After deployment, the deal disappears from the pending queue; the case appears in "My Cases"
+- Arbiter copies the **Agreement Code** from their case card and shares it with the Freelancer
 
 ### 4. Client funds escrow (`/client`)
 - The escrow address appears in Client's "My Deals" list (loaded from the factory on-chain)

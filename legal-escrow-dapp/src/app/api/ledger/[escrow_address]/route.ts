@@ -42,22 +42,24 @@ export async function PUT(
     .ilike('escrow_address', escrowLower)
     .maybeSingle();
 
-  if (!existing) return NextResponse.json({ error: 'Ledger record not found' }, { status: 404 });
-
-  if (existing.arbiter_address?.toLowerCase() !== arbiterLower) {
+  if (existing && existing.arbiter_address?.toLowerCase() !== arbiterLower) {
     return NextResponse.json({ error: 'Forbidden: you are not the arbiter of this case' }, { status: 403 });
   }
 
-  // Monotonic booleans — steps can only be set to true, never un-ticked
+  // Upsert — insert row if none exists, otherwise apply monotonic OR (steps can only go true, never false)
   const { data: updated, error } = await supabaseAdmin
     .from('cpra_ledger_progress')
-    .update({
-      registered:            existing.registered            || !!registered,
-      deposit_recorded:      existing.deposit_recorded      || !!deposit_recorded,
-      disbursement_recorded: existing.disbursement_recorded || !!disbursement_recorded,
-      closed:                existing.closed                || !!closed,
-    })
-    .ilike('escrow_address', escrowLower)
+    .upsert(
+      {
+        escrow_address:        escrowLower,
+        arbiter_address:       arbiterLower,
+        registered:            (existing?.registered            ?? false) || !!registered,
+        deposit_recorded:      (existing?.deposit_recorded      ?? false) || !!deposit_recorded,
+        disbursement_recorded: (existing?.disbursement_recorded ?? false) || !!disbursement_recorded,
+        closed:                (existing?.closed                ?? false) || !!closed,
+      },
+      { onConflict: 'escrow_address' }
+    )
     .select()
     .single();
 

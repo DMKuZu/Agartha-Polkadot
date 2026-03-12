@@ -175,30 +175,32 @@ export default function ArbiterPage() {
 
   // ── Load a case from on-chain history ─────────────────────────────────────────
 
-  const loadCase = async (c: MyCaseItem) => {
+  const loadCase = (c: MyCaseItem) => {
     setDeployedEscrowAddress(c.address);
     setBuyerAddress(c.buyer ?? '');
     setSellerAddress(c.seller ?? '');
     setSettlementAmount(c.settlementAmount !== undefined ? formatEther(c.settlementAmount) : '');
     setCurrentLedgerStep(null);
     setLedgerDone(BLANK_LEDGER);
-
-    // Load CPRA progress from DB
-    try {
-      const r = await fetch(`/api/ledger/${c.address}`);
-      const { progress } = await r.json();
-      if (progress) {
-        setLedgerDone({
-          registered:           progress.registered            ?? false,
-          depositRecorded:      progress.deposit_recorded      ?? false,
-          disbursementRecorded: progress.disbursement_recorded ?? false,
-          closed:               progress.closed                ?? false,
-        });
-      }
-    } catch {
-      // fallback to blank
-    }
   };
+
+  // Auto-fetch CPRA progress from DB whenever a case address is set
+  useEffect(() => {
+    if (!deployedEscrowAddress) return;
+    fetch(`/api/ledger/${deployedEscrowAddress}`)
+      .then(r => r.json())
+      .then(({ progress }) => {
+        if (progress) {
+          setLedgerDone({
+            registered:           progress.registered            ?? false,
+            depositRecorded:      progress.deposit_recorded      ?? false,
+            disbursementRecorded: progress.disbursement_recorded ?? false,
+            closed:               progress.closed                ?? false,
+          });
+        }
+      })
+      .catch(() => {});
+  }, [deployedEscrowAddress]);
 
   // ── Parse EscrowCreated log when factory receipt arrives ─────────────────────
 
@@ -213,13 +215,16 @@ export default function ArbiterPage() {
       refetchAllCases();
       showToast('Contract deployed successfully');
 
-      // Persist escrow address to DB (best-effort)
+      // Persist escrow address to DB, then refresh pending queue
       if (currentDealId) {
-        fetch(`/api/deals/${currentDealId}/deploy`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ escrow_address: escrowAddr, arbiter_address: address }),
-        }).catch(() => {});
+        (async () => {
+          await fetch(`/api/deals/${currentDealId}/deploy`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ escrow_address: escrowAddr, arbiter_address: address }),
+          }).catch(() => {});
+          fetchPendingDeals();
+        })();
       }
     }
   }, [factoryReceipt]);

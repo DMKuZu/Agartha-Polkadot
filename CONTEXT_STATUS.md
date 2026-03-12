@@ -4,11 +4,11 @@
 
 ---
 
-## Current Status: Day 18 of 21
+## Current Status: Day 21 of 21
 
-**Phase:** Issue fix sprint — security, UX, contract, and privacy issues resolved
+**Phase:** Production-ready on Polkadot EVM Testnet — Supabase backend, error handling, and all UX issues resolved
 
-4 post-Week-4 issues fixed: (1) Deal access-code gating — Clients generate a base64 deal code and share it out-of-band; Arbiters paste the code to load deals privately. (2) Agreement viewing — `buildDocument` exported from RicardianGenerator; all three role pages can now view and import Ricardian contracts per escrow. (3) CPRALedger admin lock removed — contract rewritten so the Escrow's `lawyer` can self-register and manage their own case; no deployer wallet needed. (4) Global Case Ledger moved to landing page; dashboard strips all party data and shows only Case ID + status.
+All features complete and deployed to Polkadot Paseo Testnet. Recent changes: Supabase DB replaces all localStorage (users, deals, cpra_ledger_progress tables); 7 API routes; server-side error logging to `error_logs` table; generic client-facing error messages; raw client-side transaction errors replaced with "Transaction failed. Please try again."; deadline past-date validation (`min` attribute); CPRA progress auto-loaded from DB on case load (reload-safe); deployed deal removed from arbiter pending queue after escrow creation; Switch Role button removed (roles are permanent); `deploy.js` merges `.env.local` instead of overwriting.
 
 ---
 
@@ -23,10 +23,14 @@
 | 5   | Factory pattern contract | Done |
 | 6–7 | Remix testing + Sepolia deployment + ABI export | Done |
 
-**Deployed Contracts (Sepolia Testnet):**
+**Deployed Contracts (Polkadot Paseo EVM Testnet — current):**
+- `LegalFactory`: `0x36d30Acc4f6A87b8A28236368F2Ab1a3f495cAA7`
+- `CPRALedger`: `0xe8966f76DF07da1C8FE6eef88314e9aA33a2bd7B`
+- `LegalEscrow` — deployed per case via factory (no fixed address)
+
+**Previously deployed on Sepolia Testnet (stale — not in active use):**
 - `LegalFactory`: `0x688c0611a5691B7c1F09a694bf4ADfb456a58Cf7`
 - `CPRALedger`: `0x4815A8Ba613a3eB21A920739dE4cA7C439c7e1b1`
-- `LegalEscrow` — deployed per case via factory (no fixed address)
 
 ABIs exported to: `legal-escrow-dapp/src/contracts/abis.ts`
 
@@ -107,10 +111,11 @@ legal-escrow-dapp/
 │   │   │   └── page.tsx              Shared read-only all-cases view (all roles)
 │   │   └── globals.css
 │   ├── components/
-│   │   ├── Web3Provider.tsx          Wagmi + RainbowKit + TanStack Query config (Hardhat + Sepolia + Paseo)
+│   │   ├── Web3Provider.tsx          Wagmi + RainbowKit + TanStack Query config (Polkadot EVM Testnet only)
 │   │   ├── RoleGuard.tsx             DB role guard — redirects unauthenticated users to onboarding
 │   │   └── RicardianGenerator.tsx    Philippine FSA template form → rendered doc → SHA256 hash
 │   ├── lib/
+│   │   ├── errors.ts                 Server-side logError() — writes to Supabase error_logs table
 │   │   └── supabase/
 │   │       └── server.ts             Supabase admin client (service role) — API routes only
 │   └── contracts/
@@ -147,43 +152,28 @@ backend/
 
 ---
 
-## Local Testing Setup (MetaMask + Hardhat)
+## Polkadot Testnet Deployment
 
-### One-time MetaMask network setup
-Add a custom network in MetaMask:
-- **Network Name:** Hardhat Local
-- **RPC URL:** `http://127.0.0.1:8545`
-- **Chain ID:** `31337`
-- **Currency Symbol:** `ETH`
-
-### Every test session workflow
 ```bash
-# Terminal 1 — start local blockchain (keep running)
+# Create backend/.env with deployer key
+echo "DEPLOYER_PRIVATE_KEY=0x<key>" > backend/.env
+
+# Deploy to Polkadot Paseo Testnet (auto-writes .env.local to frontend)
 cd backend
-npx hardhat node
+npx hardhat run scripts/deploy.js --network polkadotTestnet
 
-# Terminal 2 — deploy contracts (run after node is up)
-npx hardhat run scripts/deploy.js --network localhost
-# → prints addresses + writes legal-escrow-dapp/.env.local automatically
-
-# Terminal 3 — start frontend
+# Start frontend
 cd legal-escrow-dapp
 npm run dev
 ```
 
-### Import test wallets into MetaMask
-`npx hardhat node` prints 20 accounts with private keys. Import **3 separate accounts** (one each for Client, Freelancer, Arbiter) using their private keys via MetaMask → Import Account.
+MetaMask must be connected to **Polkadot EVM Testnet** (chain 420420417).
 
-### Contract address resolution
-`abis.ts` reads `NEXT_PUBLIC_FACTORY_ADDRESS` and `NEXT_PUBLIC_LEDGER_ADDRESS` from `.env.local` first. Falls back to the Sepolia addresses if those vars are absent. No manual address editing needed after running the deploy script.
+---
 
-### MetaMask nonce reset (required after every `hardhat node` restart)
-When `npx hardhat node` restarts, the chain resets to block 0 but MetaMask still caches the old nonce for each Hardhat test account. This causes all transactions from those accounts to hang silently.
+## Local Contract Development (Hardhat only — frontend requires Web3Provider change)
 
-**Fix — do this for every Hardhat test account imported into MetaMask:**
-MetaMask → click the account → three-dot menu → Settings → Advanced → **Clear activity and nonce data**
-
-Do this once per `npx hardhat node` session before submitting any transactions.
+> The frontend Web3Provider is configured for Polkadot EVM Testnet only. To use it with a local Hardhat node, add `hardhat` back to the `chains` array in `Web3Provider.tsx`.
 
 ---
 
@@ -198,7 +188,7 @@ Do this once per `npx hardhat node` session before submitting any transactions.
 | Data Fetching | TanStack React Query 5 |
 | Database | Supabase (PostgreSQL) — users, deals, CPRA ledger |
 | Document Hashing | crypto-js (browser-side SHA256) |
-| Network | Hardhat localhost (31337) + Sepolia testnet + Polkadot EVM Testnet (420420417) |
+| Network | Polkadot EVM Testnet (chain ID 420420417) — frontend; Hardhat localhost for contract dev/deploy only |
 
 ---
 
@@ -288,3 +278,7 @@ useSwitchChain()                  // network guard
 | 2026-03-12 | Bug fixes across all role pages: removed Fund Escrow from Arbiter (Client-only); rewrote Arbiter/Client pages to load on-chain history via `getDeployedEscrows()` + `useReadContracts` batch reads filtered by `lawyer`/`buyer` — persistent across page refreshes; added CPRA ledger progress persistence per escrow (`agartha_ledger_<addr>` localStorage); added `lawyer` field to Freelancer batch reads (8 reads/escrow); dashboard privacy: `truncAddr()` helper, settlement amounts hidden as "Confidential". TypeScript check passes with 0 errors. |
 | 2026-03-12 | Issue fix sprint (4 issues): (1) Deal code gating — Client generates `btoa(JSON.stringify(deal))` instead of writing to shared localStorage; Arbiter pastes code to decode + adds to private `agartha_my_pending_deals`; saves `agartha_deal_doc_<hash>` for agreement viewing. (2) Agreement viewing — exported `buildDocument` + `RicardianFormData` from RicardianGenerator; all three role pages batch-read `documentHash` on-chain (+1 read/escrow); View Agreement button when doc in localStorage; Import Agreement via agreement code (base64) for Freelancer; Arbiter "Copy Agreement Code" button per case card. (3) CPRALedger.sol rewritten — added `ILegalEscrow` interface, `caseRegistrar` mapping, `onlyCaseRegistrar` modifier; `registerCase` validates `keccak256(escrowAddr) == caseId` + `ILegalEscrow(escrow).lawyer() == msg.sender`; removed deployer-only restriction; `abis.ts` updated with `caseRegistrar` view function; Arbiter page admin guard + banner removed. (4) Dashboard — strips to `keccak256(escrowAddr)` (truncated) + status badge only; landing page adds "View Global Case Ledger →" link; dashboard links removed from client/arbiter pages. TypeScript check: 0 errors. |
 | 2026-03-12 | Supabase database integration. Replaced all localStorage deal/role/CPRA state with durable Supabase PostgreSQL backend. New DB tables: `users` (one wallet = one role, enforced at DB + API level), `deals` (client creates → arbiter claims via deal code → arbiter deploys → escrow_address set), `cpra_ledger_progress` (monotonic boolean steps, survives browser clears). New: `src/lib/supabase/server.ts` (service-role admin client, server-only); 7 API routes under `src/app/api/` (users/register, users/[wallet], deals, deals/claim, deals/by-hash/[hash], deals/[id]/deploy, ledger/[addr]). Updated: all 3 role pages + RoleGuard + onboarding page + requirements.md + README.md. Role conflict prevention at claim time (403 if arbiter = client or freelancer). Freelancer "Import Agreement Code" UI removed — agreement auto-fetched silently by documentHash. localStorage keys removed: `agartha_my_pending_deals`, `agartha_deal_doc_*`, `agartha_ledger_*`, `agartha_escrow_map`. `agartha_role` kept as performance cache. |
+| 2026-03-13 | Error handling sprint: `src/lib/errors.ts` (server-side logError → Supabase `error_logs` table); all 7 API routes updated to use logError + generic "Something went wrong" response; `src/app/error.tsx` global Next.js error boundary added. Client-side raw viem transaction errors removed from all 3 portal pages — replaced with generic "Transaction failed" UI. Deadline date input `min` attribute added to `RicardianGenerator.tsx` and `client/page.tsx` to block past date selection. |
+| 2026-03-13 | UX fixes: Switch Role button removed from client/arbiter/freelancer pages (roles are permanent). `deploy.js` fixed to merge `.env.local` (read existing → update only contract address keys → write back) instead of overwriting, preserving Supabase credentials. Web3Provider updated to target Polkadot EVM Testnet only (removed Hardhat + Sepolia chains since app is on Paseo). |
+| 2026-03-13 | Bug fixes: (1) Arbiter CPRA reload bug — extracted ledger progress fetch from `loadCase()` into a `useEffect` watching `deployedEscrowAddress`; progress now auto-loads from DB whenever a case address is set, preventing "stuck" record buttons after reload. (2) Arbiter pending queue — deployed deal now removed from queue immediately after `factory.createCase()` receipt; `fetchPendingDeals()` called after DB persist in the `factoryReceipt` useEffect. |
+| 2026-03-13 | Fix CPRA progress persistence root cause: `/api/ledger/[escrow_address]/route.ts` PUT handler changed from UPDATE (returned 404 if no row existed, silently swallowed by frontend `.catch(() => {})`) to UPSERT (`onConflict: 'escrow_address'`). Row is now created on first PUT if absent; monotonic OR logic preserved. Previously, progress was never written to DB when the arbiter deployed without a pending deal in the queue (no `cpra_ledger_progress` row pre-created), causing all Record buttons to reappear after every reload. |
