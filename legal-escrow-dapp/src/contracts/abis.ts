@@ -1,7 +1,7 @@
 // Local: populated automatically by backend/scripts/deploy.js via .env.local
 // Polkadot testnet: hardcoded fallback
-export const FACTORY_ADDRESS = (process.env.NEXT_PUBLIC_FACTORY_ADDRESS ?? "0xaA9c13768e1427762e3AA77CdD0c78429994205E") as `0x${string}`;
-export const LEDGER_ADDRESS = (process.env.NEXT_PUBLIC_LEDGER_ADDRESS ?? "0x49aEea0906AC3c17d0A77554cbaf488Dd83769BC") as `0x${string}`;
+export const FACTORY_ADDRESS = (process.env.NEXT_PUBLIC_FACTORY_ADDRESS ?? "0x103787ebcdED73f3F4B2390D822bacF3a29Ae134") as `0x${string}`;
+export const LEDGER_ADDRESS = (process.env.NEXT_PUBLIC_LEDGER_ADDRESS ?? "0x98F6a19b499dA372F2d780Ab9568A1F81E58501c") as `0x${string}`;
 
 export const FACTORY_ABI = [
 	{
@@ -655,6 +655,15 @@ export const LEDGER_ABI =[
 			{ "internalType": "uint256", "name": "_amount", "type": "uint256" }
 		],
 		"name": "finalizeCase",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{ "internalType": "bytes32", "name": "_caseId", "type": "bytes32" }
+		],
+		"name": "closeCancelledCase",
 		"outputs": [],
 		"stateMutability": "nonpayable",
 		"type": "function"

@@ -534,7 +534,7 @@ export default function ClientPage() {
                         </button>
                       )}
 
-                      {d.isFunded && !d.isReleased && (
+                      {d.isFunded && !d.isReleased && !d.isCancelled && (
                         <div className="mt-2">
                           <div className="flex items-center gap-2 mb-3">
                             <span className="text-xs text-slate-500">Approvals:</span>
@@ -552,6 +552,10 @@ export default function ClientPage() {
                           {d.hasApproved ? (
                             <div className="p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700 font-medium text-center">
                               You have approved. Waiting for other parties.
+                            </div>
+                          ) : d.hasCancelApproved ? (
+                            <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700 font-medium text-center">
+                              You approved cancellation — cannot also approve release.
                             </div>
                           ) : (
                             <button
@@ -582,7 +586,7 @@ export default function ClientPage() {
                           <p className="text-xs font-medium text-slate-500 mb-2">Cancel Deal (2-of-3 approval required)</p>
                           <div className="flex items-center gap-2 mb-2">
                             <div className="flex gap-1.5">
-                              {[0, 1].map((i) => (
+                              {[0, 1, 2].map((i) => (
                                 <div key={i} className={`w-4 h-4 rounded-full border-2 ${
                                   i < Number(d.cancelApprovalCount ?? 0)
                                     ? 'bg-red-500 border-red-600'
@@ -590,11 +594,15 @@ export default function ClientPage() {
                                 }`} />
                               ))}
                             </div>
-                            <span className="text-xs text-slate-500">{String(d.cancelApprovalCount ?? 0)} / 2 cancel approvals</span>
+                            <span className="text-xs text-slate-500">{String(d.cancelApprovalCount ?? 0)} / 3 cancel approvals</span>
                           </div>
                           {d.hasCancelApproved ? (
                             <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700 font-medium text-center">
                               You approved cancellation. Waiting for another party.
+                            </div>
+                          ) : d.hasApproved ? (
+                            <div className="p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700 font-medium text-center">
+                              You approved release — cannot also approve cancellation.
                             </div>
                           ) : (
                             <button

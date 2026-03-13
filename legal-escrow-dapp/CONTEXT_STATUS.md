@@ -34,12 +34,20 @@ Current implementation state of the Legal Escrow DApp.
 ### Approval & Release
 - All three parties can call `approveRelease` on the escrow contract
 - 2-of-3 approvals automatically releases funds to freelancer
-- All portals show approval progress (filled dots)
+- All portals show approval progress (3 filled dots, X/3)
+
+### On-Chain Cancellation
+- Any of the 3 parties can call `approveCancellation` on the escrow contract
+- 2-of-3 cancel approvals: sets `isCancelled = true`, refunds full balance to buyer (client)
+- Mutually exclusive with release: a wallet that approved release cannot approve cancellation and vice versa
+- All portals show cancel approval progress (3 filled dots) and enforce mutual exclusivity in UI
 
 ### CPRA Compliance Ledger (Arbiter)
 - On-chain audit trail via `CPRALedger` contract
-- Steps: Register Case → Record Deposit → Record Disbursement → Close Case
-- Progress persisted to Supabase `cpra_ledger_progress` table
+- **Locked until deal outcome is determined** — CPRA section shows "Awaiting deal outcome" until `isReleased` or `isCancelled` is true
+- **Released path (3 steps):** Register Case → Record Deposit → Finalize Case (disburse + close in one TX)
+- **Cancelled path (2 steps):** Register Case → Close Cancelled Case (no disbursement; records refund closure)
+- Progress persisted to Supabase `cpra_ledger_progress` table (`closed = true` marks completion for both paths)
 
 ### Document Access
 - `GET /api/deals/[id]/document?wallet_address=` returns a 1-hour Supabase signed URL
@@ -120,7 +128,15 @@ Current implementation state of the Legal Escrow DApp.
 | Contract | Address source | Purpose |
 |----------|---------------|---------|
 | `EscrowFactory` | `FACTORY_ADDRESS` in `abis.ts` | Creates escrow instances |
-| `Escrow` | deployed per deal | Holds funds, tracks approvals (2/3) |
+| `Escrow` | deployed per deal | Holds funds, tracks approvals + cancellations (2/3) |
 | `CPRALedger` | `LEDGER_ADDRESS` in `abis.ts` | Compliance audit trail |
+
+### Current Deployed Addresses (Polkadot EVM Testnet — Chain ID 420420417)
+| Contract | Address |
+|----------|---------|
+| EscrowFactory | `0x103787ebcdED73f3F4B2390D822bacF3a29Ae134` |
+| CPRALedger | `0x98F6a19b499dA372F2d780Ab9568A1F81E58501c` |
+
+Addresses are written to `legal-escrow-dapp/.env.local` as `NEXT_PUBLIC_FACTORY_ADDRESS` / `NEXT_PUBLIC_LEDGER_ADDRESS` by `backend/scripts/deploy.js`. Fallbacks are hardcoded in `src/contracts/abis.ts`.
 
 Supported networks: Polkadot EVM Testnet (420420417), Hardhat local (31337), Sepolia (11155111).
