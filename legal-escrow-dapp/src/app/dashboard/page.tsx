@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useState, useEffect } from 'react';
 import { useReadContract, useReadContracts } from 'wagmi';
 import { keccak256 } from 'viem';
 import { FACTORY_ADDRESS, FACTORY_ABI, ESCROW_ABI } from '../../contracts/abis';
@@ -10,24 +11,25 @@ function truncHash(h: string): string {
   return h.slice(0, 10) + '…' + h.slice(-8);
 }
 
-function StatusBadge({ isFunded, isReleased }: { isFunded: boolean; isReleased: boolean }) {
+function StatusBadge({ isFunded, isReleased, isCancelled }: {
+  isFunded: boolean | undefined;
+  isReleased: boolean | undefined;
+  isCancelled: boolean | undefined;
+}) {
+  if (isCancelled)
+    return <span className="text-xs font-semibold bg-red-100 text-red-700 px-2 py-1 rounded">Cancelled</span>;
   if (isReleased)
-    return (
-      <span className="text-xs font-semibold bg-green-100 text-green-800 px-2 py-1 rounded">
-        Released
-      </span>
-    );
+    return <span className="text-xs font-semibold bg-green-100 text-green-800 px-2 py-1 rounded">Released</span>;
   if (isFunded)
-    return (
-      <span className="text-xs font-semibold bg-amber-100 text-amber-800 px-2 py-1 rounded">
-        Funded
-      </span>
-    );
-  return (
-    <span className="text-xs font-semibold bg-slate-100 text-slate-600 px-2 py-1 rounded">
-      Awaiting Funding
-    </span>
-  );
+    return <span className="text-xs font-semibold bg-amber-100 text-amber-800 px-2 py-1 rounded">Funded</span>;
+  return <span className="text-xs font-semibold bg-slate-100 text-slate-600 px-2 py-1 rounded">Awaiting Funding</span>;
+}
+
+function CpraBadge({ closed }: { closed: boolean | undefined }) {
+  if (closed === undefined) return null;
+  return closed
+    ? <span className="text-xs font-semibold bg-indigo-100 text-indigo-800 px-2 py-1 rounded">CPRA Filed</span>
+    : <span className="text-xs font-semibold bg-amber-100 text-amber-800 px-2 py-1 rounded">CPRA Pending</span>;
 }
 
 export default function Dashboard() {
@@ -50,6 +52,7 @@ export default function Dashboard() {
   const contractReads = escrows.flatMap((addr) => [
     { address: addr, abi: ESCROW_ABI, functionName: 'isFunded' },
     { address: addr, abi: ESCROW_ABI, functionName: 'isReleased' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'isCancelled' },
   ]);
 
   const { data: stateData } = useReadContracts({
@@ -60,14 +63,31 @@ export default function Dashboard() {
   // ── caseId = keccak256(escrowAddr) — no party data exposed ───────────────────
 
   const cases = escrows.map((addr, i) => {
-    const base = i * 2;
+    const base = i * 3;
     return {
       address: addr,
-      caseId:     keccak256(addr),
-      isFunded:   stateData?.[base + 0]?.result as boolean | undefined,
-      isReleased: stateData?.[base + 1]?.result as boolean | undefined,
+      caseId:      keccak256(addr),
+      isFunded:    stateData?.[base + 0]?.result as boolean | undefined,
+      isReleased:  stateData?.[base + 1]?.result as boolean | undefined,
+      isCancelled: stateData?.[base + 2]?.result as boolean | undefined,
     };
   });
+
+  // ── CPRA status for completed/cancelled cases ─────────────────────────────────
+
+  const [ledgerClosed, setLedgerClosed] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const completed = cases.filter(c => c.isReleased || c.isCancelled).map(c => c.address);
+    completed.forEach(addr => {
+      fetch(`/api/ledger/${addr}`)
+        .then(r => r.json())
+        .then(({ progress }) => {
+          setLedgerClosed(prev => ({ ...prev, [addr]: progress?.closed ?? false }));
+        })
+        .catch(() => {});
+    });
+  }, [cases.length]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -133,8 +153,9 @@ export default function Dashboard() {
                     <p className="text-xs font-mono text-slate-700">{truncHash(c.caseId)}</p>
                   </div>
                   {c.isFunded !== undefined && c.isReleased !== undefined && (
-                    <div className="flex-shrink-0">
-                      <StatusBadge isFunded={c.isFunded} isReleased={c.isReleased} />
+                    <div className="flex-shrink-0 flex flex-col items-end gap-1">
+                      <StatusBadge isFunded={c.isFunded} isReleased={c.isReleased} isCancelled={c.isCancelled} />
+                      {(c.isReleased || c.isCancelled) && <CpraBadge closed={ledgerClosed[c.address]} />}
                     </div>
                   )}
                 </div>

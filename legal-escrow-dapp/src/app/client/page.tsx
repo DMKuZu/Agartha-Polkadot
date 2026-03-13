@@ -110,6 +110,13 @@ function StatusBadge({ status, arbiterAccepted, freelancerAccepted }: {
   return <span className="text-xs font-semibold bg-amber-100 text-amber-800 px-2 py-1 rounded">Awaiting acceptance ({n}/2)</span>;
 }
 
+function CpraBadge({ closed }: { closed: boolean | undefined }) {
+  if (closed === undefined) return null;
+  return closed
+    ? <span className="text-xs font-semibold bg-indigo-100 text-indigo-800 px-2 py-1 rounded">CPRA Filed</span>
+    : <span className="text-xs font-semibold bg-amber-100 text-amber-800 px-2 py-1 rounded">CPRA Pending</span>;
+}
+
 export default function ClientPage() {
   const { address, isConnected } = useAccount();
 
@@ -228,19 +235,27 @@ export default function ClientPage() {
   const [expandedOnChain, setExpandedOnChain] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    const hashes = myDeals.map(d => d.documentHash).filter(Boolean) as string[];
-    hashes.forEach(hash => {
-      if (onChainDealInfo[hash]) return;
-      fetch(`/api/deals/by-hash/${hash}`)
+    myDeals.forEach(d => {
+      if (onChainDealInfo[d.address]) return;
+      fetch(`/api/deals/by-escrow/${d.address}`)
         .then(r => r.json())
         .then(({ deal }) => {
           if (deal?.form_data) {
-            setOnChainDealInfo(prev => ({ ...prev, [hash]: { formData: deal.form_data, dealId: deal.id } }));
+            setOnChainDealInfo(prev => ({ ...prev, [d.address]: { formData: deal.form_data, dealId: deal.id } }));
+          } else if (d.documentHash) {
+            fetch(`/api/deals/by-hash/${d.documentHash}`)
+              .then(r => r.json())
+              .then(({ deal: d2 }) => {
+                if (d2?.form_data) {
+                  setOnChainDealInfo(prev => ({ ...prev, [d.address]: { formData: d2.form_data, dealId: d2.id } }));
+                }
+              })
+              .catch(() => {});
           }
         })
         .catch(() => {});
     });
-  }, [myDeals.length]);
+  }, [JSON.stringify(myDeals.map(d => d.address))]);
 
   // ── Refetch after on-chain tx ─────────────────────────────────────────────────
 
@@ -382,6 +397,22 @@ export default function ClientPage() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  // ── CPRA status for completed/cancelled deals ─────────────────────────────────
+
+  const [ledgerClosed, setLedgerClosed] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const completed = myDeals.filter(d => d.isReleased || d.isCancelled).map(d => d.address);
+    completed.forEach(addr => {
+      fetch(`/api/ledger/${addr}`)
+        .then(r => r.json())
+        .then(({ progress }) => {
+          setLedgerClosed(prev => ({ ...prev, [addr]: progress?.closed ?? false }));
+        })
+        .catch(() => {});
+    });
+  }, [myDeals.length]);
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
@@ -505,8 +536,10 @@ export default function ClientPage() {
                             Freelancer: <span className="font-mono">{d.seller?.slice(0, 10)}…</span>
                           </p>
                         </div>
-                        <div className="flex-shrink-0">
-                          {d.isReleased ? (
+                        <div className="flex-shrink-0 flex flex-col items-end gap-1">
+                          {d.isCancelled ? (
+                            <span className="text-xs font-semibold bg-red-100 text-red-700 px-2 py-1 rounded">Cancelled</span>
+                          ) : d.isReleased ? (
                             <span className="text-xs font-semibold bg-green-100 text-green-800 px-2 py-1 rounded">Released</span>
                           ) : d.isFunded ? (
                             <span className="text-xs font-semibold bg-amber-100 text-amber-800 px-2 py-1 rounded">
@@ -515,6 +548,7 @@ export default function ClientPage() {
                           ) : (
                             <span className="text-xs font-semibold bg-slate-100 text-slate-600 px-2 py-1 rounded">Awaiting Funding</span>
                           )}
+                          {(d.isReleased || d.isCancelled) && <CpraBadge closed={ledgerClosed[d.address]} />}
                         </div>
                       </div>
 
@@ -618,8 +652,8 @@ export default function ClientPage() {
                         </div>
                       )}
 
-                      {d.documentHash && onChainDealInfo[d.documentHash] && (() => {
-                        const { formData, dealId } = onChainDealInfo[d.documentHash];
+                      {onChainDealInfo[d.address] && (() => {
+                        const { formData, dealId } = onChainDealInfo[d.address];
                         const isExp = expandedOnChain.has(d.address);
                         return (
                           <div className="mt-2 border-t border-slate-200 pt-2">

@@ -4,6 +4,8 @@ A trustless, decentralized legal escrow service for the freelance economy. Bridg
 
 Built on Polkadot (Paseo Testnet) with Solidity smart contracts, Next.js frontend, and wallet-based authentication.
 
+**Status:** Production-ready on Polkadot EVM Testnet (Chain ID 420420417). All core features fully implemented and tested. See [CONTEXT_STATUS.md](./CONTEXT_STATUS.md) for current deployment status, completed features, and known issues.
+
 ---
 
 ## Roles

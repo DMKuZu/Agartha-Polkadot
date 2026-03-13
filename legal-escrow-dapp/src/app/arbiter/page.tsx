@@ -49,6 +49,13 @@ function ViewDocumentButton({ dealId, walletAddress }: { dealId: string; walletA
   );
 }
 
+function CpraBadge({ closed }: { closed: boolean | undefined }) {
+  if (closed === undefined) return null;
+  return closed
+    ? <span className="text-xs font-semibold bg-indigo-100 text-indigo-800 px-2 py-1 rounded">CPRA Filed</span>
+    : <span className="text-xs font-semibold bg-amber-100 text-amber-800 px-2 py-1 rounded">CPRA Pending</span>;
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type ToastEntry = { id: number; message: string; type: 'success' | 'error' };
@@ -64,6 +71,7 @@ interface MyCaseItem {
   isReleased:    boolean | undefined;
   approvalCount: bigint  | undefined;
   documentHash:  string  | undefined;
+  isCancelled:   boolean | undefined;
 }
 
 interface PendingDealItem {
@@ -162,6 +170,7 @@ export default function ArbiterPage() {
     { address: addr, abi: ESCROW_ABI, functionName: 'isReleased' },
     { address: addr, abi: ESCROW_ABI, functionName: 'approvalCount' },
     { address: addr, abi: ESCROW_ABI, functionName: 'documentHash' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'isCancelled' },
   ]);
 
   const { data: allCasesData, refetch: refetchAllCases } = useReadContracts({
@@ -171,7 +180,7 @@ export default function ArbiterPage() {
 
   const myCases: MyCaseItem[] = allEscrows
     .map((addr, i) => {
-      const base = i * 8;
+      const base = i * 9;
       return {
         address: addr,
         lawyer:           allCasesData?.[base + 0]?.result as `0x${string}` | undefined,
@@ -182,6 +191,7 @@ export default function ArbiterPage() {
         isReleased:       allCasesData?.[base + 5]?.result as boolean | undefined,
         approvalCount:    allCasesData?.[base + 6]?.result as bigint | undefined,
         documentHash:     allCasesData?.[base + 7]?.result as string | undefined,
+        isCancelled:      allCasesData?.[base + 8]?.result as boolean | undefined,
       };
     })
     .filter((c) => c.lawyer?.toLowerCase() === address?.toLowerCase());
@@ -192,15 +202,51 @@ export default function ArbiterPage() {
   const [caseDealInfo, setCaseDealInfo] = useState<Record<string, { formData: any; dealId: string }>>({});
 
   useEffect(() => {
-    const hashes = myCases.map(c => c.documentHash).filter(Boolean) as string[];
-    hashes.forEach(hash => {
-      if (caseDealInfo[hash]) return;
-      fetch(`/api/deals/by-hash/${hash}`)
+    console.log('[caseDealInfo] Effect running for', myCases.length, 'cases');
+    myCases.forEach(c => {
+      if (caseDealInfo[c.address]) {
+        console.log('[caseDealInfo] Already loaded:', c.address);
+        return;
+      }
+      console.log('[caseDealInfo] Fetching by-escrow for:', c.address);
+      fetch(`/api/deals/by-escrow/${c.address}`)
         .then(r => r.json())
         .then(({ deal }) => {
           if (deal?.form_data) {
-            setCaseDealInfo(prev => ({ ...prev, [hash]: { formData: deal.form_data, dealId: deal.id } }));
+            console.log('[caseDealInfo] by-escrow SUCCESS for', c.address, 'dealId:', deal.id);
+            setCaseDealInfo(prev => ({ ...prev, [c.address]: { formData: deal.form_data, dealId: deal.id } }));
+          } else if (c.documentHash) {
+            console.log('[caseDealInfo] by-escrow returned no deal, trying by-hash:', c.documentHash);
+            fetch(`/api/deals/by-hash/${c.documentHash}`)
+              .then(r => r.json())
+              .then(({ deal: d2 }) => {
+                if (d2?.form_data) {
+                  console.log('[caseDealInfo] by-hash SUCCESS for', c.address, 'dealId:', d2.id);
+                  setCaseDealInfo(prev => ({ ...prev, [c.address]: { formData: d2.form_data, dealId: d2.id } }));
+                } else {
+                  console.log('[caseDealInfo] by-hash returned no deal for', c.documentHash);
+                }
+              })
+              .catch((e) => { console.log('[caseDealInfo] by-hash FAILED:', e); });
+          } else {
+            console.log('[caseDealInfo] No deal and no documentHash for', c.address);
           }
+        })
+        .catch((e) => { console.log('[caseDealInfo] by-escrow FAILED:', e); });
+    });
+  }, [JSON.stringify(myCases.map(c => c.address))]);
+
+  // ── CPRA status for completed/cancelled cases (list view) ─────────────────────
+
+  const [casesCpraStatus, setCasesCpraStatus] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const completed = myCases.filter(c => c.isReleased || c.isCancelled).map(c => c.address);
+    completed.forEach(addr => {
+      fetch(`/api/ledger/${addr}`)
+        .then(r => r.json())
+        .then(({ progress }) => {
+          setCasesCpraStatus(prev => ({ ...prev, [addr]: progress?.closed ?? false }));
         })
         .catch(() => {});
     });
@@ -626,13 +672,18 @@ export default function ArbiterPage() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
-                          {c.isReleased ? (
-                            <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded font-semibold">Released</span>
-                          ) : c.isFunded ? (
-                            <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-semibold">Funded</span>
-                          ) : (
-                            <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-semibold">Awaiting Funding</span>
-                          )}
+                          <div className="flex flex-col items-end gap-1">
+                            {c.isCancelled ? (
+                              <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded font-semibold">Cancelled</span>
+                            ) : c.isReleased ? (
+                              <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded font-semibold">Released</span>
+                            ) : c.isFunded ? (
+                              <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-semibold">Funded</span>
+                            ) : (
+                              <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-semibold">Awaiting Funding</span>
+                            )}
+                            {(c.isReleased || c.isCancelled) && <CpraBadge closed={casesCpraStatus[c.address]} />}
+                          </div>
                           <button
                             onClick={() => loadCase(c)}
                             className={`text-xs font-semibold px-3 py-1 rounded transition-colors ${
@@ -647,8 +698,8 @@ export default function ArbiterPage() {
                       </div>
 
                       {/* View Agreement (from DB) */}
-                      {c.documentHash && caseDealInfo[c.documentHash] && (() => {
-                        const { formData, dealId } = caseDealInfo[c.documentHash];
+                      {caseDealInfo[c.address] && (() => {
+                        const { formData, dealId } = caseDealInfo[c.address];
                         const isExpanded = expandedAgreements.has(c.address);
                         return (
                           <div className="mt-3 pt-3 border-t border-slate-200">

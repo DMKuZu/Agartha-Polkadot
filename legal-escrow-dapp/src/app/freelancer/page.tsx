@@ -43,6 +43,13 @@ function ViewDocumentButton({ dealId, walletAddress }: { dealId: string; walletA
   );
 }
 
+function CpraBadge({ closed }: { closed: boolean | undefined }) {
+  if (closed === undefined) return null;
+  return closed
+    ? <span className="text-xs font-semibold bg-indigo-100 text-indigo-800 px-2 py-1 rounded">CPRA Filed</span>
+    : <span className="text-xs font-semibold bg-amber-100 text-amber-800 px-2 py-1 rounded">CPRA Pending</span>;
+}
+
 export default function FreelancerPage() {
   const { address, isConnected } = useAccount();
 
@@ -135,19 +142,27 @@ export default function FreelancerPage() {
   const [contractDealInfo, setContractDealInfo] = useState<Record<string, { formData: any; dealId: string }>>({});
 
   useEffect(() => {
-    const hashes = myContracts.map(c => c.documentHash).filter(Boolean) as string[];
-    hashes.forEach(hash => {
-      if (contractDealInfo[hash]) return;
-      fetch(`/api/deals/by-hash/${hash}`)
+    myContracts.forEach(c => {
+      if (contractDealInfo[c.address]) return;
+      fetch(`/api/deals/by-escrow/${c.address}`)
         .then(r => r.json())
         .then(({ deal }) => {
           if (deal?.form_data) {
-            setContractDealInfo(prev => ({ ...prev, [hash]: { formData: deal.form_data, dealId: deal.id } }));
+            setContractDealInfo(prev => ({ ...prev, [c.address]: { formData: deal.form_data, dealId: deal.id } }));
+          } else if (c.documentHash) {
+            fetch(`/api/deals/by-hash/${c.documentHash}`)
+              .then(r => r.json())
+              .then(({ deal: d2 }) => {
+                if (d2?.form_data) {
+                  setContractDealInfo(prev => ({ ...prev, [c.address]: { formData: d2.form_data, dealId: d2.id } }));
+                }
+              })
+              .catch(() => {});
           }
         })
         .catch(() => {});
     });
-  }, [myContracts.length]);
+  }, [JSON.stringify(myContracts.map(c => c.address))]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
 
@@ -253,6 +268,22 @@ export default function FreelancerPage() {
       setRejectingDealId(null);
     }
   };
+
+  // ── CPRA status for completed/cancelled contracts ────────────────────────────
+
+  const [ledgerClosed, setLedgerClosed] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const completed = myContracts.filter(c => c.isReleased || c.isCancelled).map(c => c.address);
+    completed.forEach(addr => {
+      fetch(`/api/ledger/${addr}`)
+        .then(r => r.json())
+        .then(({ progress }) => {
+          setLedgerClosed(prev => ({ ...prev, [addr]: progress?.closed ?? false }));
+        })
+        .catch(() => {});
+    });
+  }, [myContracts.length]);
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -409,8 +440,12 @@ export default function FreelancerPage() {
                       <div className="min-w-0">
                         <p className="text-xs font-mono text-slate-600 break-all">{c.address}</p>
                       </div>
-                      <div className="flex-shrink-0">
-                        {c.isReleased ? (
+                      <div className="flex-shrink-0 flex flex-col items-end gap-1">
+                        {c.isCancelled ? (
+                          <span className="text-xs font-semibold bg-red-100 text-red-700 px-2 py-1 rounded">
+                            Cancelled
+                          </span>
+                        ) : c.isReleased ? (
                           <span className="text-xs font-semibold bg-green-100 text-green-800 px-2 py-1 rounded">
                             Payment Received
                           </span>
@@ -423,6 +458,7 @@ export default function FreelancerPage() {
                             Awaiting Funding
                           </span>
                         )}
+                        {(c.isReleased || c.isCancelled) && <CpraBadge closed={ledgerClosed[c.address]} />}
                       </div>
                     </div>
 
@@ -447,8 +483,8 @@ export default function FreelancerPage() {
                     </div>
 
                     {/* Agreement viewing */}
-                    {c.documentHash && contractDealInfo[c.documentHash] && (() => {
-                      const { formData, dealId } = contractDealInfo[c.documentHash];
+                    {contractDealInfo[c.address] && (() => {
+                      const { formData, dealId } = contractDealInfo[c.address];
                       const isExpanded = expandedAgreements.has(c.address);
                       return (
                         <div className="mt-3 mb-4 border-t border-slate-200 pt-3">
