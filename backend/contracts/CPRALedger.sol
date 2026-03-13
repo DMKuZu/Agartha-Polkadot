@@ -95,6 +95,15 @@ contract CPRALedger {
         emit CaseClosed(_caseId);
     }
 
+    // Record disbursement and close the case in a single transaction
+    function finalizeCase(bytes32 _caseId, uint256 _amount) external onlyCaseRegistrar(_caseId) {
+        require(!caseLedger[_caseId].isClosed, "Case is closed");
+        caseLedger[_caseId].disbursedAmount += _amount;
+        emit FundsDisbursed(_caseId, _amount);
+        caseLedger[_caseId].isClosed = true;
+        emit CaseClosed(_caseId);
+    }
+
     function getTotalCases() external view returns (uint256) {
         return caseIds.length;
     }

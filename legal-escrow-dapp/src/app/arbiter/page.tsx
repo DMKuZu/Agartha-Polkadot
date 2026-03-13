@@ -1,7 +1,8 @@
 'use client';
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   useAccount,
   useWriteContract,
@@ -14,12 +15,44 @@ import {
 import { parseEther, formatEther, isAddress, parseEventLogs, keccak256 } from 'viem';
 import { FACTORY_ADDRESS, FACTORY_ABI, ESCROW_ABI, LEDGER_ADDRESS, LEDGER_ABI } from '../../contracts/abis';
 import { RoleGuard } from '../../components/RoleGuard';
-import { buildDocument, RicardianFormData } from '../../components/RicardianGenerator';
+
+// ── View document button ───────────────────────────────────────────────────────
+
+function ViewDocumentButton({ dealId, walletAddress }: { dealId: string; walletAddress: string }) {
+  const [fetching, setFetching] = React.useState(false);
+
+  const handleClick = async () => {
+    setFetching(true);
+    try {
+      const r = await fetch(`/api/deals/${dealId}/document?wallet_address=${walletAddress}`);
+      const data = await r.json();
+      if (data.url) {
+        window.open(data.url, '_blank', 'noopener,noreferrer');
+      } else {
+        alert(data.error ?? 'Could not retrieve document.');
+      }
+    } catch {
+      alert('Could not retrieve document.');
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={fetching}
+      className="text-xs font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1 rounded transition-colors disabled:text-slate-400"
+    >
+      {fetching ? 'Loading…' : 'View / Download Document'}
+    </button>
+  );
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type ToastEntry = { id: number; message: string; type: 'success' | 'error' };
-type LedgerStep = 'register' | 'deposit' | 'disburse' | 'close';
+type LedgerStep = 'register' | 'deposit' | 'disburse' | 'close' | 'finalize';
 type LedgerDone = { registered: boolean; depositRecorded: boolean; disbursementRecorded: boolean; closed: boolean };
 
 interface MyCaseItem {
@@ -45,6 +78,7 @@ interface PendingDealItem {
   documentHash: string;
   formData: any;
   status: string;
+  arbiterAccepted: boolean;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -155,17 +189,17 @@ export default function ArbiterPage() {
   // ── Case agreements — fetched from DB by document hash ───────────────────────
 
   const [expandedAgreements, setExpandedAgreements] = useState<Set<string>>(new Set());
-  const [caseAgreements, setCaseAgreements] = useState<Record<string, any>>({});
+  const [caseDealInfo, setCaseDealInfo] = useState<Record<string, { formData: any; dealId: string }>>({});
 
   useEffect(() => {
     const hashes = myCases.map(c => c.documentHash).filter(Boolean) as string[];
     hashes.forEach(hash => {
-      if (caseAgreements[hash]) return;
+      if (caseDealInfo[hash]) return;
       fetch(`/api/deals/by-hash/${hash}`)
         .then(r => r.json())
         .then(({ deal }) => {
           if (deal?.form_data) {
-            setCaseAgreements(prev => ({ ...prev, [hash]: deal.form_data as RicardianFormData }));
+            setCaseDealInfo(prev => ({ ...prev, [hash]: { formData: deal.form_data, dealId: deal.id } }));
           }
         })
         .catch(() => {});
@@ -255,6 +289,25 @@ export default function ArbiterPage() {
   });
   const hasCurrentWalletApproved = hasCurrentWalletApprovedRaw as boolean | undefined;
 
+  const { data: isCancelledRaw,               refetch: refetchCancelled      } = useReadContract({
+    address: deployedEscrowAddress ?? undefined, abi: ESCROW_ABI, functionName: 'isCancelled',
+    query: { enabled: !!deployedEscrowAddress },
+  });
+  const isCancelled = isCancelledRaw as boolean | undefined;
+
+  const { data: cancelApprovalCountRaw,       refetch: refetchCancelApprovals } = useReadContract({
+    address: deployedEscrowAddress ?? undefined, abi: ESCROW_ABI, functionName: 'cancelApprovalCount',
+    query: { enabled: !!deployedEscrowAddress },
+  });
+  const cancelApprovalCount = cancelApprovalCountRaw as bigint | undefined;
+
+  const { data: hasCurrentWalletCancelApprovedRaw, refetch: refetchCancelApproved } = useReadContract({
+    address: deployedEscrowAddress ?? undefined, abi: ESCROW_ABI, functionName: 'hasCancelApproved',
+    args: address ? [address] : undefined,
+    query: { enabled: !!deployedEscrowAddress && !!address },
+  });
+  const hasCurrentWalletCancelApproved = hasCurrentWalletCancelApprovedRaw as boolean | undefined;
+
   // ── Network guard ─────────────────────────────────────────────────────────────
 
   const chainId = useChainId();
@@ -281,6 +334,7 @@ export default function ArbiterPage() {
   useEffect(() => {
     if (!isEscrowTxConfirmed) return;
     refetchFunded(); refetchApprovals(); refetchReleased(); refetchApproved();
+    refetchCancelled(); refetchCancelApprovals(); refetchCancelApproved();
     refetchAllCases();
     showToast('Transaction confirmed');
   }, [isEscrowTxConfirmed]);
@@ -293,8 +347,8 @@ export default function ArbiterPage() {
     const next: LedgerDone = {
       registered:           ledgerDone.registered           || currentLedgerStep === 'register',
       depositRecorded:      ledgerDone.depositRecorded       || currentLedgerStep === 'deposit',
-      disbursementRecorded: ledgerDone.disbursementRecorded  || currentLedgerStep === 'disburse',
-      closed:               ledgerDone.closed                || currentLedgerStep === 'close',
+      disbursementRecorded: ledgerDone.disbursementRecorded  || currentLedgerStep === 'disburse' || currentLedgerStep === 'finalize',
+      closed:               ledgerDone.closed                || currentLedgerStep === 'close'    || currentLedgerStep === 'finalize',
     };
     setLedgerDone(next);
     showToast('Ledger entry recorded');
@@ -343,6 +397,7 @@ export default function ArbiterPage() {
           documentHash:      d.document_hash,
           formData:          d.form_data,
           status:            d.status,
+          arbiterAccepted:   d.arbiter_accepted ?? false,
         }));
       setAllPendingDeals(items);
     } catch {
@@ -436,6 +491,11 @@ export default function ArbiterPage() {
     writeEscrow({ address: deployedEscrowAddress, abi: ESCROW_ABI, functionName: 'approveRelease' });
   };
 
+  const handleApproveCancellation = () => {
+    if (!deployedEscrowAddress) return;
+    writeEscrow({ address: deployedEscrowAddress, abi: ESCROW_ABI, functionName: 'approveCancellation' });
+  };
+
   const handleRegisterCase = () => {
     if (!caseId || !deployedEscrowAddress) return;
     setCurrentLedgerStep('register');
@@ -451,16 +511,10 @@ export default function ArbiterPage() {
     writeLedger({ address: LEDGER_ADDRESS, abi: LEDGER_ABI, functionName: 'recordDeposit', args: [caseId, parseEther(settlementAmount)] });
   };
 
-  const handleRecordDisbursement = () => {
+  const handleFinalizeCase = () => {
     if (!caseId) return;
-    setCurrentLedgerStep('disburse');
-    writeLedger({ address: LEDGER_ADDRESS, abi: LEDGER_ABI, functionName: 'recordDisbursement', args: [caseId, parseEther(settlementAmount)] });
-  };
-
-  const handleCloseCase = () => {
-    if (!caseId) return;
-    setCurrentLedgerStep('close');
-    writeLedger({ address: LEDGER_ADDRESS, abi: LEDGER_ABI, functionName: 'closeCase', args: [caseId] });
+    setCurrentLedgerStep('finalize');
+    writeLedger({ address: LEDGER_ADDRESS, abi: LEDGER_ABI, functionName: 'finalizeCase', args: [caseId, parseEther(settlementAmount)] });
   };
 
   // ── UI helpers ───────────────────────────────────────────────────────────────
@@ -498,6 +552,9 @@ export default function ArbiterPage() {
             <h1 className="text-3xl font-bold mb-3 text-slate-800">Arbiter Portal</h1>
             <p className="text-slate-500 mb-4">Review and accept deals, deploy escrow contracts, and manage CPRA compliance.</p>
             <div className="flex justify-center mb-4"><ConnectButton /></div>
+            <Link href="/dashboard" className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors">
+              View Global Case Ledger →
+            </Link>
           </div>
 
           <hr className="border-slate-200 mb-8" />
@@ -584,8 +641,8 @@ export default function ArbiterPage() {
                       </div>
 
                       {/* View Agreement (from DB) */}
-                      {c.documentHash && caseAgreements[c.documentHash] && (() => {
-                        const formData = caseAgreements[c.documentHash];
+                      {c.documentHash && caseDealInfo[c.documentHash] && (() => {
+                        const { formData, dealId } = caseDealInfo[c.documentHash];
                         const isExpanded = expandedAgreements.has(c.address);
                         return (
                           <div className="mt-3 pt-3 border-t border-slate-200">
@@ -597,19 +654,18 @@ export default function ArbiterPage() {
                               })}
                               className="text-xs font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1 rounded transition-colors"
                             >
-                              {isExpanded ? 'Hide Agreement' : 'View Agreement'}
+                              {isExpanded ? 'Hide Document' : 'View Document'}
                             </button>
                             {isExpanded && (
                               formData?.type === 'file' ? (
-                                <div className="mt-2 bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 space-y-1">
+                                <div className="mt-2 bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 space-y-2">
                                   <p className="font-semibold text-slate-800">{formData.filename}</p>
                                   <p className="text-slate-500">Document hash (on-chain proof):</p>
                                   <p className="font-mono text-slate-600 break-all">{c.documentHash}</p>
+                                  {address && <ViewDocumentButton dealId={dealId} walletAddress={address} />}
                                 </div>
                               ) : (
-                                <pre className="mt-2 bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
-                                  {buildDocument(formData as RicardianFormData)}
-                                </pre>
+                                <p className="mt-2 text-xs text-slate-400">No preview available.</p>
                               )
                             )}
                           </div>
@@ -661,22 +717,32 @@ export default function ArbiterPage() {
                           >
                             {expandedDeal === deal.dbId ? 'Collapse' : 'Review'}
                           </button>
-                          <button
-                            onClick={() => handleRejectDeal(deal)}
-                            disabled={rejectingDealId === deal.dbId || acceptingDealId === deal.dbId}
-                            className="text-xs font-semibold bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1 rounded transition-colors disabled:bg-slate-100 disabled:text-slate-400"
-                          >
-                            {rejectingDealId === deal.dbId ? 'Rejecting…' : 'Reject'}
-                          </button>
-                          <button
-                            onClick={() => handleAcceptDeal(deal)}
-                            disabled={acceptingDealId === deal.dbId || rejectingDealId === deal.dbId}
-                            className="text-xs font-semibold bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded transition-colors disabled:bg-slate-400"
-                          >
-                            {acceptingDealId === deal.dbId ? 'Accepting…' : 'Accept'}
-                          </button>
+                          {!deal.arbiterAccepted && (
+                            <>
+                              <button
+                                onClick={() => handleRejectDeal(deal)}
+                                disabled={rejectingDealId === deal.dbId || acceptingDealId === deal.dbId}
+                                className="text-xs font-semibold bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1 rounded transition-colors disabled:bg-slate-100 disabled:text-slate-400"
+                              >
+                                {rejectingDealId === deal.dbId ? 'Rejecting…' : 'Reject'}
+                              </button>
+                              <button
+                                onClick={() => handleAcceptDeal(deal)}
+                                disabled={acceptingDealId === deal.dbId || rejectingDealId === deal.dbId}
+                                className="text-xs font-semibold bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded transition-colors disabled:bg-slate-400"
+                              >
+                                {acceptingDealId === deal.dbId ? 'Accepting…' : 'Accept'}
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
+
+                      {deal.arbiterAccepted && (
+                        <div className="mt-2 px-2 py-1.5 bg-green-50 border border-green-200 rounded text-xs text-green-700 font-medium">
+                          You have accepted. Waiting for Freelancer.
+                        </div>
+                      )}
 
                       {expandedDeal === deal.dbId && (
                         <div className="mt-3 pt-3 border-t border-amber-100 space-y-2">
@@ -692,12 +758,13 @@ export default function ArbiterPage() {
                               </div>
                             )}
                           </div>
-                          {deal.formData && (
+                          {deal.formData?.type === 'file' && (
                             <div className="mt-2">
-                              <p className="text-xs font-medium text-slate-600 mb-1">Service Agreement:</p>
-                              <pre className="bg-slate-50 border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
-                                {buildDocument(deal.formData as RicardianFormData)}
-                              </pre>
+                              <p className="text-xs font-medium text-slate-600 mb-1">Agreement Document:</p>
+                              <div className="bg-slate-50 border border-slate-200 rounded p-3 text-xs text-slate-700 space-y-2">
+                                <p className="font-semibold text-slate-800">{deal.formData.filename}</p>
+                                {address && <ViewDocumentButton dealId={deal.dbId} walletAddress={address} />}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -756,12 +823,13 @@ export default function ArbiterPage() {
                             </div>
                           )}
                         </div>
-                        {deal.formData && (
+                        {deal.formData?.type === 'file' && (
                           <div className="mt-2">
-                            <p className="text-xs font-medium text-slate-600 mb-1">Service Agreement:</p>
-                            <pre className="bg-slate-50 border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
-                              {buildDocument(deal.formData as RicardianFormData)}
-                            </pre>
+                            <p className="text-xs font-medium text-slate-600 mb-1">Agreement Document:</p>
+                            <div className="bg-slate-50 border border-slate-200 rounded p-3 text-xs text-slate-700 space-y-2">
+                              <p className="font-semibold text-slate-800">{deal.formData.filename}</p>
+                              {address && <ViewDocumentButton dealId={deal.dbId} walletAddress={address} />}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -917,6 +985,48 @@ export default function ArbiterPage() {
             </div>
           )}
 
+          {/* Deal Cancelled */}
+          {deployedEscrowAddress && isCancelled && (
+            <div className="mt-8 p-6 bg-red-50 rounded-lg border border-red-300 text-center">
+              <h2 className="text-2xl font-bold text-red-800 mb-2">Deal Cancelled</h2>
+              <p className="text-sm text-red-700">2-of-3 parties approved cancellation. Funds have been refunded to the Client.</p>
+              <p className="text-xs font-mono text-red-600 mt-3 break-all">Escrow: {deployedEscrowAddress}</p>
+            </div>
+          )}
+
+          {/* Approve Cancellation */}
+          {deployedEscrowAddress && isConnected && isFunded && !isReleased && !isCancelled && (
+            <div className="mt-8 p-6 bg-slate-50 rounded-lg border border-slate-200">
+              <h2 className="text-xl font-semibold mb-1 text-slate-700">Approve Cancellation</h2>
+              <p className="text-sm text-slate-500 mb-4">
+                If the deal needs to be cancelled, 2-of-3 parties must approve. Funds are refunded to the Client automatically.
+              </p>
+              <div className="flex items-center gap-3 mb-5">
+                <span className="text-sm font-medium text-slate-600">Cancel approvals:</span>
+                <span className="text-2xl font-bold text-slate-800">{String(cancelApprovalCount ?? 0)}</span>
+                <span className="text-slate-400 text-lg">/</span>
+                <span className="text-2xl font-bold text-slate-400">2</span>
+                <div className="flex gap-2 ml-1">
+                  {[0, 1].map((i) => (
+                    <div key={i} className={`w-5 h-5 rounded-full border-2 ${
+                      i < Number(cancelApprovalCount ?? 0) ? 'bg-red-500 border-red-600' : 'bg-slate-200 border-slate-300'
+                    }`} />
+                  ))}
+                </div>
+              </div>
+              {hasCurrentWalletCancelApproved ? (
+                <div className="p-3 bg-amber-50 text-amber-800 rounded-md border border-amber-200 text-sm font-medium">
+                  This wallet has approved cancellation. Waiting for another party.
+                </div>
+              ) : (
+                <button onClick={handleApproveCancellation} disabled={isEscrowPending}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-md transition-colors disabled:bg-slate-400">
+                  {isEscrowPending ? 'Confirming in Wallet...' : 'Approve Cancellation'}
+                </button>
+              )}
+            </div>
+          )}
+
           {/* CPRA Ledger */}
           {deployedEscrowAddress && isConnected && (
             <div className="mt-8 p-6 bg-slate-50 rounded-lg border border-slate-200">
@@ -941,17 +1051,10 @@ export default function ArbiterPage() {
                   disabled={isLedgerPending}
                 />
                 <LedgerStepRow
-                  label="3. Record Disbursement"
+                  label="3. Finalize Case (Disburse + Close)"
                   available={!!isReleased}
-                  done={ledgerDone.disbursementRecorded}
-                  onAction={handleRecordDisbursement}
-                  disabled={isLedgerPending}
-                />
-                <LedgerStepRow
-                  label="4. Close Case"
-                  available={ledgerDone.disbursementRecorded}
-                  done={ledgerDone.closed}
-                  onAction={handleCloseCase}
+                  done={ledgerDone.disbursementRecorded && ledgerDone.closed}
+                  onAction={handleFinalizeCase}
                   disabled={isLedgerPending}
                 />
               </div>

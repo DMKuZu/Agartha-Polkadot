@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
 
   if (error) {
     await logError('/api/deals POST', error);
-    return NextResponse.json({ error: 'Something went wrong. Please try again.' }, { status: 500 });
+    return NextResponse.json({ error: 'Something went wrong. Please try again.', detail: error.message }, { status: 500 });
   }
 
   return NextResponse.json({ deal }, { status: 201 });

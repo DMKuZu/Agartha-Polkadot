@@ -1,14 +1,47 @@
 'use client';
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
+import Link from 'next/link';
 import { useState, useEffect, useCallback } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, useReadContracts } from 'wagmi';
 import { formatEther } from 'viem';
 import { FACTORY_ADDRESS, FACTORY_ABI, ESCROW_ABI } from '../../contracts/abis';
 import { RoleGuard } from '../../components/RoleGuard';
-import { buildDocument, RicardianFormData } from '../../components/RicardianGenerator';
 
 type ToastEntry = { id: number; message: string; type: 'success' | 'error' };
+
+// ── View document button ───────────────────────────────────────────────────────
+
+function ViewDocumentButton({ dealId, walletAddress }: { dealId: string; walletAddress: string }) {
+  const [fetching, setFetching] = useState(false);
+
+  const handleClick = async () => {
+    setFetching(true);
+    try {
+      const r = await fetch(`/api/deals/${dealId}/document?wallet_address=${walletAddress}`);
+      const data = await r.json();
+      if (data.url) {
+        window.open(data.url, '_blank', 'noopener,noreferrer');
+      } else {
+        alert(data.error ?? 'Could not retrieve document.');
+      }
+    } catch {
+      alert('Could not retrieve document.');
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={fetching}
+      className="text-xs font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1 rounded transition-colors disabled:text-slate-400"
+    >
+      {fetching ? 'Loading…' : 'View / Download Document'}
+    </button>
+  );
+}
 
 export default function FreelancerPage() {
   const { address, isConnected } = useAccount();
@@ -51,7 +84,7 @@ export default function FreelancerPage() {
 
   const allEscrows = (escrowsRaw ?? []) as `0x${string}`[];
 
-  // ── Batch read: seller + isFunded + isReleased + approvalCount + hasApproved + documentHash ──
+  // ── Batch read: seller + isFunded + isReleased + approvalCount + hasApproved + documentHash + cancel state ──
 
   const contractReads = allEscrows.flatMap((addr) => [
     { address: addr, abi: ESCROW_ABI, functionName: 'seller' },
@@ -63,6 +96,9 @@ export default function FreelancerPage() {
     { address: addr, abi: ESCROW_ABI, functionName: 'approvalCount' },
     { address: addr, abi: ESCROW_ABI, functionName: 'hasApproved', args: address ? [address] : undefined },
     { address: addr, abi: ESCROW_ABI, functionName: 'documentHash' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'isCancelled' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'cancelApprovalCount' },
+    { address: addr, abi: ESCROW_ABI, functionName: 'hasCancelApproved', args: address ? [address] : undefined },
   ]);
 
   const { data: stateData, refetch: refetchState } = useReadContracts({
@@ -74,7 +110,7 @@ export default function FreelancerPage() {
 
   const myContracts = allEscrows
     .map((addr, i) => {
-      const base = i * 9;
+      const base = i * 12;
       return {
         address: addr,
         seller:           stateData?.[base + 0]?.result as `0x${string}` | undefined,
@@ -86,6 +122,9 @@ export default function FreelancerPage() {
         approvalCount:    stateData?.[base + 6]?.result as bigint | undefined,
         hasApproved:      stateData?.[base + 7]?.result as boolean | undefined,
         documentHash:     stateData?.[base + 8]?.result as string | undefined,
+        isCancelled:         stateData?.[base + 9]?.result  as boolean | undefined,
+        cancelApprovalCount: stateData?.[base + 10]?.result as bigint  | undefined,
+        hasCancelApproved:   stateData?.[base + 11]?.result as boolean | undefined,
       };
     })
     .filter((c) => c.seller?.toLowerCase() === address?.toLowerCase());
@@ -93,17 +132,17 @@ export default function FreelancerPage() {
   // ── Agreement viewing — fetched silently from DB by document hash ─────────────
 
   const [expandedAgreements, setExpandedAgreements] = useState<Set<string>>(new Set());
-  const [contractAgreements, setContractAgreements] = useState<Record<string, any>>({});
+  const [contractDealInfo, setContractDealInfo] = useState<Record<string, { formData: any; dealId: string }>>({});
 
   useEffect(() => {
     const hashes = myContracts.map(c => c.documentHash).filter(Boolean) as string[];
     hashes.forEach(hash => {
-      if (contractAgreements[hash]) return;
+      if (contractDealInfo[hash]) return;
       fetch(`/api/deals/by-hash/${hash}`)
         .then(r => r.json())
         .then(({ deal }) => {
           if (deal?.form_data) {
-            setContractAgreements(prev => ({ ...prev, [hash]: deal.form_data as RicardianFormData }));
+            setContractDealInfo(prev => ({ ...prev, [hash]: { formData: deal.form_data, dealId: deal.id } }));
           }
         })
         .catch(() => {});
@@ -119,6 +158,11 @@ export default function FreelancerPage() {
     writeEscrow({ address: escrowAddr, abi: ESCROW_ABI, functionName: 'approveRelease' });
   };
 
+  const handleApproveCancellation = (escrowAddr: `0x${string}`) => {
+    setPendingApproval(escrowAddr + '-cancel');
+    writeEscrow({ address: escrowAddr, abi: ESCROW_ABI, functionName: 'approveCancellation' });
+  };
+
   useEffect(() => {
     if (!isEscrowTxConfirmed) return;
     refetchState();
@@ -132,10 +176,10 @@ export default function FreelancerPage() {
     dbId: string;
     clientAddress: string;
     amount: string;
-    title: string;
-    deliverables: string;
+    filename: string;
     deadline: string;
     formData: any;
+    freelancerAccepted: boolean;
   }
 
   const [pendingAcceptanceDeals, setPendingAcceptanceDeals] = useState<PendingAcceptanceDeal[]>([]);
@@ -152,13 +196,13 @@ export default function FreelancerPage() {
       const items: PendingAcceptanceDeal[] = deals
         .filter((d: any) => d.status === 'pending_acceptance')
         .map((d: any) => ({
-          dbId:          d.id,
-          clientAddress: d.client_address,
-          amount:        d.form_data?.amount ?? '',
-          title:         d.form_data?.title ?? '',
-          deliverables:  d.form_data?.deliverables ?? '',
-          deadline:      d.form_data?.deadline ?? '',
-          formData:      d.form_data,
+          dbId:               d.id,
+          clientAddress:      d.client_address,
+          amount:             d.form_data?.amount ?? '',
+          filename:           d.form_data?.filename ?? d.form_data?.title ?? '(document)',
+          deadline:           d.form_data?.deadline ?? '',
+          formData:           d.form_data,
+          freelancerAccepted: d.freelancer_accepted ?? false,
         }));
       setPendingAcceptanceDeals(items);
     } catch {
@@ -222,6 +266,9 @@ export default function FreelancerPage() {
             <div>
               <h1 className="text-2xl font-bold text-slate-800">Freelancer Portal</h1>
               <p className="text-sm text-slate-500 mt-1">View your active contracts and approve payment release.</p>
+              <Link href="/dashboard" className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2 transition-colors mt-1 inline-block">
+                View Global Case Ledger →
+              </Link>
             </div>
             <div className="flex items-center gap-3 flex-shrink-0">
               <ConnectButton />
@@ -261,13 +308,10 @@ export default function FreelancerPage() {
                     <div key={deal.dbId} className="bg-white rounded-md border border-amber-200 p-4">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-800 truncate">{deal.title}</p>
+                          <p className="text-sm font-semibold text-slate-800 truncate">{deal.filename}</p>
                           <p className="text-xs text-slate-500 mt-0.5">
                             {deal.amount} PAS · Client: <span className="font-mono">{deal.clientAddress?.slice(0, 10)}…</span>
                           </p>
-                          {deal.deadline && (
-                            <p className="text-xs text-slate-400 mt-0.5">Deadline: {deal.deadline}</p>
-                          )}
                         </div>
                         <div className="flex gap-2 flex-shrink-0">
                           <button
@@ -276,42 +320,46 @@ export default function FreelancerPage() {
                           >
                             {expandedPendingDeal === deal.dbId ? 'Collapse' : 'Review'}
                           </button>
-                          <button
-                            onClick={() => handleRejectDeal(deal.dbId)}
-                            disabled={rejectingDealId === deal.dbId || acceptingDealId === deal.dbId}
-                            className="text-xs font-semibold bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1 rounded transition-colors disabled:bg-slate-100 disabled:text-slate-400"
-                          >
-                            {rejectingDealId === deal.dbId ? 'Rejecting…' : 'Reject'}
-                          </button>
-                          <button
-                            onClick={() => handleAcceptDeal(deal.dbId)}
-                            disabled={acceptingDealId === deal.dbId || rejectingDealId === deal.dbId}
-                            className="text-xs font-semibold bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded transition-colors disabled:bg-slate-400"
-                          >
-                            {acceptingDealId === deal.dbId ? 'Accepting…' : 'Accept'}
-                          </button>
+                          {!deal.freelancerAccepted && (
+                            <>
+                              <button
+                                onClick={() => handleRejectDeal(deal.dbId)}
+                                disabled={rejectingDealId === deal.dbId || acceptingDealId === deal.dbId}
+                                className="text-xs font-semibold bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1 rounded transition-colors disabled:bg-slate-100 disabled:text-slate-400"
+                              >
+                                {rejectingDealId === deal.dbId ? 'Rejecting…' : 'Reject'}
+                              </button>
+                              <button
+                                onClick={() => handleAcceptDeal(deal.dbId)}
+                                disabled={acceptingDealId === deal.dbId || rejectingDealId === deal.dbId}
+                                className="text-xs font-semibold bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded transition-colors disabled:bg-slate-400"
+                              >
+                                {acceptingDealId === deal.dbId ? 'Accepting…' : 'Accept'}
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
+
+                      {deal.freelancerAccepted && (
+                        <div className="mt-2 px-2 py-1.5 bg-green-50 border border-green-200 rounded text-xs text-green-700 font-medium">
+                          You have accepted. Waiting for Arbiter.
+                        </div>
+                      )}
 
                       {expandedPendingDeal === deal.dbId && (
                         <div className="mt-3 pt-3 border-t border-amber-100 space-y-2">
                           <div className="text-xs space-y-1.5">
                             <div><span className="text-slate-500">Client:</span> <span className="font-mono text-slate-700 break-all">{deal.clientAddress}</span></div>
                             <div><span className="text-slate-500">Amount:</span> <span className="font-semibold text-slate-700">{deal.amount} PAS</span></div>
-                            {deal.deadline && <div><span className="text-slate-500">Deadline:</span> <span className="text-slate-700">{deal.deadline}</span></div>}
-                            {deal.deliverables && (
-                              <div>
-                                <span className="text-slate-500">Deliverables:</span>
-                                <p className="mt-1 text-slate-700 bg-slate-50 rounded p-2 whitespace-pre-wrap">{deal.deliverables}</p>
-                              </div>
-                            )}
                           </div>
-                          {deal.formData && (
+                          {deal.formData?.type === 'file' && (
                             <div className="mt-2">
-                              <p className="text-xs font-medium text-slate-600 mb-1">Service Agreement:</p>
-                              <pre className="bg-slate-50 border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
-                                {buildDocument(deal.formData as RicardianFormData)}
-                              </pre>
+                              <p className="text-xs font-medium text-slate-600 mb-1">Agreement Document:</p>
+                              <div className="bg-slate-50 border border-slate-200 rounded p-3 text-xs text-slate-700 space-y-2">
+                                <p className="font-semibold text-slate-800">{deal.formData.filename}</p>
+                                {address && <ViewDocumentButton dealId={deal.dbId} walletAddress={address} />}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -398,9 +446,9 @@ export default function FreelancerPage() {
                       </div>
                     </div>
 
-                    {/* Agreement viewing — silent fetch, no import code needed */}
-                    {c.documentHash && contractAgreements[c.documentHash] && (() => {
-                      const formData = contractAgreements[c.documentHash];
+                    {/* Agreement viewing */}
+                    {c.documentHash && contractDealInfo[c.documentHash] && (() => {
+                      const { formData, dealId } = contractDealInfo[c.documentHash];
                       const isExpanded = expandedAgreements.has(c.address);
                       return (
                         <div className="mt-3 mb-4 border-t border-slate-200 pt-3">
@@ -412,22 +460,20 @@ export default function FreelancerPage() {
                             })}
                             className="text-xs font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-3 py-1 rounded transition-colors"
                           >
-                            {isExpanded ? 'Hide Agreement' : 'View Agreement'}
+                            {isExpanded ? 'Hide Document' : 'View Document'}
                           </button>
                           {isExpanded && (
                             <div className="mt-3">
                               {formData?.type === 'file' ? (
-                                <div className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 space-y-1">
+                                <div className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 space-y-2">
                                   <p className="font-semibold text-slate-800">{formData.filename}</p>
                                   <p className="text-slate-500">Document hash (on-chain proof):</p>
                                   <p className="font-mono text-slate-600 break-all">{c.documentHash}</p>
+                                  {address && <ViewDocumentButton dealId={dealId} walletAddress={address} />}
                                 </div>
                               ) : (
-                                <pre className="bg-white border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
-                                  {buildDocument(formData as RicardianFormData)}
-                                </pre>
+                                <p className="text-xs text-slate-400">No preview available.</p>
                               )}
-                              <p className="text-xs text-slate-400 mt-1 font-mono break-all">Hash: {c.documentHash}</p>
                             </div>
                           )}
                         </div>
@@ -441,8 +487,15 @@ export default function FreelancerPage() {
                       </div>
                     )}
 
+                    {/* Deal cancelled banner */}
+                    {c.isCancelled && (
+                      <div className="p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700 font-medium text-center">
+                        Deal cancelled — funds have been refunded to the Client.
+                      </div>
+                    )}
+
                     {/* Approve action */}
-                    {c.isFunded && !c.isReleased && (
+                    {c.isFunded && !c.isReleased && !c.isCancelled && (
                       <div>
                         <div className="flex items-center gap-2 mb-3">
                           <span className="text-xs text-slate-500">Approvals:</span>
@@ -473,6 +526,37 @@ export default function FreelancerPage() {
                               : 'Approve Release'}
                           </button>
                         )}
+
+                        <div className="mt-4 pt-4 border-t border-slate-200">
+                          <p className="text-xs font-medium text-slate-500 mb-2">Cancel Deal (2-of-3 approval required)</p>
+                          <div className="flex items-center gap-2 mb-2">
+                            <div className="flex gap-1.5">
+                              {[0, 1].map((i) => (
+                                <div key={i} className={`w-4 h-4 rounded-full border-2 ${
+                                  i < Number(c.cancelApprovalCount ?? 0)
+                                    ? 'bg-red-500 border-red-600'
+                                    : 'bg-slate-200 border-slate-300'
+                                }`} />
+                              ))}
+                            </div>
+                            <span className="text-xs text-slate-500">{String(c.cancelApprovalCount ?? 0)} / 2 cancel approvals</span>
+                          </div>
+                          {c.hasCancelApproved ? (
+                            <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700 font-medium text-center">
+                              You approved cancellation. Waiting for another party.
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => handleApproveCancellation(c.address)}
+                              disabled={isEscrowPending && pendingApproval === c.address + '-cancel'}
+                              className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 rounded-md text-xs transition-colors disabled:bg-slate-400"
+                            >
+                              {isEscrowPending && pendingApproval === c.address + '-cancel'
+                                ? 'Confirming...'
+                                : 'Approve Cancellation'}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )}
 

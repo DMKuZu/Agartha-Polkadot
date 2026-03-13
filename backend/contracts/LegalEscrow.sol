@@ -15,10 +15,17 @@ contract LegalEscrow{
     uint8 public approvalCount;
     mapping(address => bool) public hasApproved;
 
+    // Cancellation state (2-of-3 refunds buyer)
+    bool public isCancelled;
+    uint8 public cancelApprovalCount;
+    mapping(address => bool) public hasCancelApproved;
+
     // Events for the Next.js frontend to listen to
     event Funded(address indexed depositor, uint256 amount);
     event Approved(address indexed approver, uint8 currentApprovals);
     event Released(address indexed seller, uint256 amount);
+    event CancelApproved(address indexed approver, uint8 currentCancelApprovals);
+    event Refunded(address indexed buyer, uint256 amount);
 
     modifier onlyParties() {
         require(
@@ -73,10 +80,30 @@ contract LegalEscrow{
     function releaseFunds() internal {
         isReleased = true;
         uint256 amountToTransfer = address(this).balance;
-        
+
         (bool success, ) = seller.call{value: amountToTransfer}("");
         require(success, "Transfer to seller failed");
-        
+
         emit Released(seller, amountToTransfer);
+    }
+
+    // Parties approve cancellation (2-of-3 refunds buyer)
+    function approveCancellation() external onlyParties {
+        require(isFunded, "Not funded yet");
+        require(!isReleased, "Funds already released");
+        require(!isCancelled, "Already cancelled");
+        require(!hasCancelApproved[msg.sender], "Already approved cancellation");
+
+        hasCancelApproved[msg.sender] = true;
+        cancelApprovalCount++;
+        emit CancelApproved(msg.sender, cancelApprovalCount);
+
+        if (cancelApprovalCount >= 2) {
+            isCancelled = true;
+            uint256 amount = address(this).balance;
+            (bool success, ) = buyer.call{value: amount}("");
+            require(success, "Refund failed");
+            emit Refunded(buyer, amount);
+        }
     }
 }
