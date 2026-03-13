@@ -4,11 +4,11 @@
 
 ---
 
-## Current Status: Day 21 of 21
+## Current Status: Day 21 of 21 — Feature Complete
 
-**Phase:** Production-ready on Polkadot EVM Testnet — Pre-deployment acceptance workflow, direct address routing, both parties must accept before arbiter can deploy
+**Phase:** Production-ready on Polkadot EVM Testnet
 
-All features complete and deployed to Polkadot Paseo Testnet. Recent changes: Client inputs both freelancer AND arbiter wallet addresses at deal creation (inline role validation via GET /api/users); deals automatically appear in both parties' "Pending Acceptance" queues (no deal code sharing); both arbiter and freelancer can view rendered Ricardian contract and click Accept/Reject; if either rejects → status: cancelled; if both accept → status: accepted → arbiter can deploy; deal code claim flow removed; new API routes: POST /api/deals/[id]/accept, POST /api/deals/[id]/reject; DB columns added: arbiter_accepted, freelancer_accepted; CPRA UPSERT fix for progress persistence.
+All features complete and deployed. Latest sprint added on-chain deal cancellation (2-of-3 `approveCancellation` multisig refund to client) across all three portals, a single-transaction CPRA `finalizeCase` (combines disbursement + close), mutual exclusivity between release and cancel approval paths, and a file-based agreement document workflow replacing the form-based Ricardian generator for deal creation.
 
 ---
 
@@ -23,17 +23,6 @@ All features complete and deployed to Polkadot Paseo Testnet. Recent changes: Cl
 | 5   | Factory pattern contract | Done |
 | 6–7 | Remix testing + Sepolia deployment + ABI export | Done |
 
-**Deployed Contracts (Polkadot Paseo EVM Testnet — current):**
-- `LegalFactory`: `0x36d30Acc4f6A87b8A28236368F2Ab1a3f495cAA7`
-- `CPRALedger`: `0xe8966f76DF07da1C8FE6eef88314e9aA33a2bd7B`
-- `LegalEscrow` — deployed per case via factory (no fixed address)
-
-**Previously deployed on Sepolia Testnet (stale — not in active use):**
-- `LegalFactory`: `0x688c0611a5691B7c1F09a694bf4ADfb456a58Cf7`
-- `CPRALedger`: `0x4815A8Ba613a3eB21A920739dE4cA7C439c7e1b1`
-
-ABIs exported to: `legal-escrow-dapp/src/contracts/abis.ts`
-
 ---
 
 ### Week 2 — Frontend Foundation & Web3 Middleware `[COMPLETE]`
@@ -43,12 +32,6 @@ ABIs exported to: `legal-escrow-dapp/src/contracts/abis.ts`
 | 8–9   | Next.js project init, routing, layout | Done |
 | 10–12 | Wagmi + viem + RainbowKit integration | Done |
 | 13–14 | Ricardian engine — PDF upload + browser-side SHA256 hashing | Done |
-
-**Key files built:**
-- `src/app/layout.tsx` — root layout with Web3Provider wrapper
-- `src/app/page.tsx` — main dashboard with case creation form
-- `src/components/Web3Provider.tsx` — Wagmi + RainbowKit config (Hardhat localhost + Sepolia, SSR enabled)
-- `src/components/RicardianUploader.tsx` — PDF upload → SHA256 → `0x`-prefixed hash
 
 ---
 
@@ -71,11 +54,66 @@ ABIs exported to: `legal-escrow-dapp/src/contracts/abis.ts`
 | 1 | Terminology rename: Buyer→Client, Seller→Freelancer, Lawyer→Arbiter | Done |
 | 2 | Onboarding page (`/`) — connect wallet + role selector (Client / Freelancer / Arbiter) | Done |
 | 2 | Role routing: `/client`, `/freelancer`, `/arbiter` pages + `RoleGuard` component | Done |
-| 3 | `RicardianGenerator.tsx` — Philippine FSA template form → auto-hash (replaces PDF uploader) | Done |
+| 3 | `RicardianGenerator.tsx` — Philippine FSA template form → auto-hash | Done |
 | 4 | Client page (`/client`) — create deal → submit for Arbiter review → fund → approve | Done |
 | 5 | Freelancer page (`/freelancer`) — view contracts → approve release → settlement received | Done |
 | 6 | Arbiter page (`/arbiter`) — pending deals queue + review + deploy + CPRA ledger | Done |
 | Bug fixes | Remove Fund Escrow from Arbiter; on-chain history for all roles; CPRA ledger persistence; dashboard privacy | Done |
+
+---
+
+### Post-Sprint — Acceptance Workflow + File Documents + Cancellation `[COMPLETE]`
+
+| Feature | Status |
+|---------|--------|
+| Pre-deployment acceptance: Client enters freelancer + arbiter addresses; both must accept | Done |
+| Inline address role validation at deal creation | Done |
+| `POST /api/deals/[id]/accept`, `POST /api/deals/[id]/reject` API routes | Done |
+| `arbiter_accepted`, `freelancer_accepted` DB columns | Done |
+| File upload workflow: `POST /api/deals/upload` → Supabase Storage → SHA256 hash | Done |
+| Document retrieval: `GET /api/deals/[id]/document` → signed URL | Done |
+| `DELETE /api/deals/[id]` — client can delete cancelled deals | Done |
+| `approveCancellation()` on `LegalEscrow.sol` — 2-of-3 multisig refund to client | Done |
+| `finalizeCase()` on `CPRALedger.sol` — single-TX disbursement + close | Done |
+| ABI updates for all new contract functions and events | Done |
+| Cancellation UI across all 3 portals (2/3 counter, mutual exclusivity with release path) | Done |
+| CPRA ledger reduced from 4 steps to 3 (Register → Record Deposit → Finalize Case) | Done |
+| Finalize Case gated on steps 1 + 2 completed + `isReleased` | Done |
+
+---
+
+## Deployed Contract Addresses
+
+### Polkadot Paseo EVM Testnet — Current (active in `.env.local`)
+
+| Contract | Address |
+|----------|---------|
+| `LegalFactory` | `0x020C80A17aD5B2aC1a4F3D799A18122FCd5079B6` |
+| `CPRALedger` | `0x0D46ca33610BB7529AC9C1a30ABf30D08a82C9d5` |
+| `LegalEscrow` | Deployed per case via factory (no fixed address) |
+
+### Hardcoded fallback in `abis.ts` (previous deployment)
+
+| Contract | Address |
+|----------|---------|
+| `LegalFactory` | `0xaA9c13768e1427762e3AA77CdD0c78429994205E` |
+| `CPRALedger` | `0x49aEea0906AC3c17d0A77554cbaf488Dd83769BC` |
+
+### Previous Polkadot Testnet (stale)
+
+| Contract | Address |
+|----------|---------|
+| `LegalFactory` | `0x36d30Acc4f6A87b8A28236368F2Ab1a3f495cAA7` |
+| `CPRALedger` | `0xe8966f76DF07da1C8FE6eef88314e9aA33a2bd7B` |
+
+### Previous Sepolia Testnet (stale — no longer in active use)
+
+| Contract | Address |
+|----------|---------|
+| `LegalFactory` | `0x688c0611a5691B7c1F09a694bf4ADfb456a58Cf7` |
+| `CPRALedger` | `0x4815A8Ba613a3eB21A920739dE4cA7C439c7e1b1` |
+
+ABIs exported to: `legal-escrow-dapp/src/contracts/abis.ts`
 
 ---
 
@@ -87,32 +125,37 @@ legal-escrow-dapp/
 │   ├── app/
 │   │   ├── layout.tsx                Root layout — Web3Provider wrapper
 │   │   ├── page.tsx                  Onboarding — wallet connect + role selector (DB registration)
+│   │   ├── error.tsx                 Global Next.js error boundary
 │   │   ├── api/
 │   │   │   ├── users/
-│   │   │   │   ├── register/route.ts POST — register wallet+role; 409 on conflict
+│   │   │   │   ├── register/route.ts    POST — register wallet+role; 409 on conflict
 │   │   │   │   └── [wallet_address]/
-│   │   │   │       └── route.ts      GET — fetch registered role for wallet
+│   │   │   │       └── route.ts         GET — fetch registered role for wallet
 │   │   │   ├── deals/
-│   │   │   │   ├── route.ts          POST create deal (validates freelancer+arbiter roles) / GET list by wallet
+│   │   │   │   ├── route.ts             POST create deal / GET list by wallet
+│   │   │   │   ├── upload/
+│   │   │   │   │   └── route.ts         POST — multipart file upload → Supabase Storage → SHA256 hash
 │   │   │   │   ├── by-hash/
 │   │   │   │   │   └── [document_hash]/route.ts  GET form_data by on-chain hash
 │   │   │   │   └── [id]/
-│   │   │   │       ├── accept/route.ts  POST — arbiter or freelancer accepts deal
-│   │   │   │       ├── reject/route.ts  POST — arbiter or freelancer rejects deal
-│   │   │   │       └── deploy/route.ts  PATCH — set escrow_address after factory deploy
+│   │   │   │       ├── route.ts          GET single deal / DELETE cancelled deal
+│   │   │   │       ├── accept/route.ts   POST — arbiter or freelancer accepts deal
+│   │   │   │       ├── reject/route.ts   POST — arbiter or freelancer rejects deal
+│   │   │   │       ├── deploy/route.ts   PATCH — set escrow_address after factory deploy
+│   │   │   │       └── document/route.ts GET — signed Supabase Storage URL for document download
 │   │   │   └── ledger/
-│   │   │       └── [escrow_address]/route.ts  GET+PUT CPRA step flags
+│   │   │       └── [escrow_address]/route.ts  GET+PUT CPRA step flags (upsert on PUT)
 │   │   ├── arbiter/
-│   │   │   └── page.tsx              Arbiter workflow — pending review queue (DB), deploy, CPRA ledger (DB)
+│   │   │   └── page.tsx              Arbiter workflow — pending review queue (DB), deploy, CPRA ledger
 │   │   ├── client/
-│   │   │   └── page.tsx              Client workflow — create deal (DB), fund escrow, approve
+│   │   │   └── page.tsx              Client workflow — create deal (file upload), fund escrow, approve/cancel
 │   │   ├── freelancer/
-│   │   │   └── page.tsx              Freelancer workflow — view contracts, approve release (agreement via DB)
+│   │   │   └── page.tsx              Freelancer workflow — view contracts, approve/cancel
 │   │   ├── dashboard/
-│   │   │   └── page.tsx              Shared read-only all-cases view (all roles)
+│   │   │   └── page.tsx              Shared read-only all-cases view (caseId + status, no party data)
 │   │   └── globals.css
 │   ├── components/
-│   │   ├── Web3Provider.tsx          Wagmi + RainbowKit + TanStack Query config (Polkadot EVM Testnet only)
+│   │   ├── Web3Provider.tsx          Wagmi + RainbowKit config (Polkadot EVM Testnet only)
 │   │   ├── RoleGuard.tsx             DB role guard — redirects unauthenticated users to onboarding
 │   │   └── RicardianGenerator.tsx    Philippine FSA template form → rendered doc → SHA256 hash
 │   ├── lib/
@@ -120,17 +163,17 @@ legal-escrow-dapp/
 │   │   └── supabase/
 │   │       └── server.ts             Supabase admin client (service role) — API routes only
 │   └── contracts/
-│       └── abis.ts                   All ABIs + deployed addresses
+│       └── abis.ts                   All ABIs + deployed addresses (env var fallback)
 
 backend/
 ├── contracts/
-│   ├── LegalEscrow.sol               2-of-3 multi-sig escrow + Ricardian hash
+│   ├── LegalEscrow.sol               2-of-3 multi-sig escrow + Ricardian hash + cancellation
 │   ├── LegalFactory.sol              Factory — deploys one LegalEscrow per case
-│   ├── CPRALedger.sol                On-chain audit trail for CPRA compliance
+│   ├── CPRALedger.sol                On-chain audit trail — registerCase, recordDeposit, finalizeCase
 │   └── Lock.sol                      Hardhat boilerplate (unused)
 ├── scripts/
-│   └── deploy.js                     Deploys Factory + Ledger; auto-writes .env.local to frontend
-├── hardhat.config.js                 Solidity 0.8.28 + localhost network (chainId 31337)
+│   └── deploy.js                     Deploys Factory + Ledger; auto-writes .env.local to frontend (merge, not overwrite)
+├── hardhat.config.js                 Solidity 0.8.28 + hardhat/localhost (31337) + polkadotTestnet (420420417)
 └── test/
 ```
 
@@ -150,6 +193,42 @@ backend/
 | `agartha_deal_doc_<documentHash>` | `deals.form_data` via `GET /api/deals/by-hash/[hash]` |
 | `agartha_ledger_<escrowAddr>` | `cpra_ledger_progress` via `GET/PUT /api/ledger/[addr]` |
 | `agartha_escrow_map` | `deals.escrow_address` via `PATCH /api/deals/[id]/deploy` |
+
+---
+
+## Supabase Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `users` | One row per wallet — stores `wallet_address` (lowercase), `role` |
+| `deals` | Deal lifecycle — `client_address`, `freelancer_address`, `arbiter_address`, `document_hash`, `form_data` (JSONB), `status`, `arbiter_accepted`, `freelancer_accepted`, `escrow_address`, `deal_code_id` |
+| `cpra_ledger_progress` | Per-escrow CPRA step booleans — `registered`, `deposit_recorded`, `disbursement_recorded`, `closed` (monotonic, upsert) |
+| `error_logs` | Server-side error captures from `logError()` |
+
+**Deal status values:** `pending_acceptance` → `accepted` → `deployed` (or `cancelled` if rejected)
+
+**`form_data` shape (file-based deal):**
+```json
+{
+  "type": "file",
+  "filename": "agreement.pdf",
+  "storage_path": "deals/<uuid>/agreement.pdf",
+  "amount": "2.5"
+}
+```
+
+---
+
+## Environment Variables
+
+| Variable | Location | Purpose |
+|----------|----------|---------|
+| `NEXT_PUBLIC_FACTORY_ADDRESS` | `legal-escrow-dapp/.env.local` | LegalFactory on-chain address |
+| `NEXT_PUBLIC_LEDGER_ADDRESS` | `legal-escrow-dapp/.env.local` | CPRALedger on-chain address |
+| `NEXT_PUBLIC_SUPABASE_URL` | `legal-escrow-dapp/.env.local` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `legal-escrow-dapp/.env.local` | Supabase public anon key |
+| `SUPABASE_SERVICE_ROLE_KEY` | `legal-escrow-dapp/.env.local` | Supabase service role key (server-only) |
+| `DEPLOYER_PRIVATE_KEY` | `backend/.env` | Private key for contract deployment |
 
 ---
 
@@ -188,18 +267,21 @@ MetaMask must be connected to **Polkadot EVM Testnet** (chain 420420417).
 | Wallet UI | RainbowKit 2 |
 | Data Fetching | TanStack React Query 5 |
 | Database | Supabase (PostgreSQL) — users, deals, CPRA ledger |
+| File Storage | Supabase Storage — agreement documents (signed URL access) |
 | Document Hashing | crypto-js (browser-side SHA256) |
-| Network | Polkadot EVM Testnet (chain ID 420420417) — frontend; Hardhat localhost for contract dev/deploy only |
+| Network | Polkadot EVM Testnet (chain ID 420420417) — frontend; Hardhat localhost for contract dev only |
 
 ---
 
 ## Smart Contract Summary
 
 ### LegalEscrow.sol
-- State: `buyer`, `seller`, `lawyer`, `settlementAmount`, `documentHash`, `isFunded`, `isReleased`, `approvalCount`, `hasApproved(address)`
+- State: `buyer`, `seller`, `lawyer`, `settlementAmount`, `documentHash`, `isFunded`, `isReleased`, `approvalCount`, `hasApproved(address)`, `isCancelled`, `cancelApprovalCount`, `hasCancelApproved(address)`
 - `fund()` — buyer (Client) deposits exact settlement amount (payable)
-- `approveRelease()` — any party approves; auto-releases funds at 2/3
+- `approveRelease()` — any party approves; auto-releases funds to seller at 2/3
+- `approveCancellation()` — any party approves; auto-refunds funds to buyer at 2/3
 - `onlyParties` modifier restricts all calls
+- Events: `Funded`, `Approved`, `Released`, `CancelApproved`, `Refunded`
 
 ### LegalFactory.sol
 - `createCase(buyer, seller, lawyer, amount, documentHash)` → deploys `LegalEscrow`, returns address
@@ -207,8 +289,13 @@ MetaMask must be connected to **Polkadot EVM Testnet** (chain 420420417).
 - Event: `EscrowCreated(escrowAddress, buyer, seller)`
 
 ### CPRALedger.sol
-- Owner: `lawFirmAdmin`
-- `registerCase()`, `recordDeposit()`, `recordDisbursement()`, `closeCase()`
+- Owner: `lawFirmAdmin` (deployer)
+- `registerCase(caseId, clientId, escrowContract, purpose)` — only callable by lawyer of that escrow
+- `recordDeposit(caseId, amount)` — records incoming funds
+- `recordDisbursement(caseId, amount)` — records outgoing funds (separate from closeCase)
+- `closeCase(caseId)` — marks case closed (immutable after)
+- `finalizeCase(caseId, amount)` — records disbursement AND closes in one transaction (preferred)
+- `caseRegistrar(caseId)` — returns the address that registered each case
 - `mapping(bytes32 => CaseRecord)` — tracks clientId, escrowContract, depositedAmount, disbursedAmount, isClosed, purpose
 
 ---
@@ -217,47 +304,35 @@ MetaMask must be connected to **Polkadot EVM Testnet** (chain 420420417).
 
 ```typescript
 useAccount()                      // connected wallet address + isConnected
-useWriteContract()                // send txns: createCase, fund, approveRelease
+useWriteContract()                // send txns: createCase, fund, approveRelease, approveCancellation, ledger steps
 useWaitForTransactionReceipt()    // parse EscrowCreated log to get new escrow address
-useReadContract()                 // read escrow/ledger/factory state
-useReadContracts()                // batch read multiple escrow fields
+useReadContract()                 // read escrow/ledger/factory state (single)
+useReadContracts()                // batch read multiple escrow fields (11 reads/escrow for client, 12 for freelancer)
 useChainId()                      // current chain
-useSwitchChain()                  // network guard
+useSwitchChain()                  // network guard (must be on 31337, 11155111, or 420420417)
 ```
 
 ---
 
-## Week 3 Checklist `[ALL DONE]`
+## Multicall Stride Reference
 
-- [x] Parse `EscrowCreated` log to extract deployed escrow address after `createCase()`
-- [x] Build `fund()` UI — client deposit page
-- [x] Build `approveRelease()` UI — per-party approval with live approval count
-- [x] Wire CPRA ledger: `registerCase` → `recordDeposit` → `recordDisbursement` → `closeCase`
-- [x] Build lawyer dashboard read view — list all cases with status
-- [x] End-to-end settlement simulation — confirmed working
-- [x] Loading states + tx success/failure toasts
-- [x] Wrong-network guard (enforce Sepolia or Hardhat)
-- [x] Display ETH amounts in readable fiat-friendly format
+| Portal | Reads per escrow | Fields |
+|--------|-----------------|--------|
+| Arbiter (My Cases) | 8 | lawyer, buyer, seller, settlementAmount, isFunded, isReleased, approvalCount, documentHash |
+| Client (My Deals) | 11 | buyer, seller, settlementAmount, isFunded, isReleased, approvalCount, hasApproved, documentHash, isCancelled, cancelApprovalCount, hasCancelApproved |
+| Freelancer (My Contracts) | 12 | seller, buyer, lawyer, settlementAmount, isFunded, isReleased, approvalCount, hasApproved, documentHash, isCancelled, cancelApprovalCount, hasCancelApproved |
 
-## Week 4 Checklist `[COMPLETE]`
+---
 
-- [x] Add Paseo Testnet chain to Web3Provider (chain ID 420420417, Polkadot EVM Testnet)
-- [x] Rename Buyer→Client, Seller→Freelancer, Lawyer→Arbiter in UI labels
-- [x] Update ETH→PAS currency label in UI
-- [x] Build onboarding/role-selector landing page (`/`)
-- [x] Build `RoleGuard` component
-- [x] Build `RicardianGenerator` component (Philippine FSA template → hash)
-- [x] Delete `RicardianUploader` component (replaced)
-- [x] Build Client page (`/client`)
-- [x] Build Freelancer page (`/freelancer`)
-- [x] Build Arbiter page (`/arbiter`) with pending deals queue
-- [x] Update `README.md` with new role-based flow
-- [x] Remove Fund Escrow button from Arbiter page (Client-only action)
-- [x] Add on-chain "My Cases" history to Arbiter page (persistent across reloads, Load button per case)
-- [x] Add on-chain "My Deals" history to Client page (persistent across reloads, per-deal Fund/Approve)
-- [x] Add `lawyer` field to Freelancer batch reads; show Arbiter address in contract cards
-- [x] Persist CPRA ledger progress per escrow in localStorage (`agartha_ledger_<addr>`)
-- [x] Dashboard privacy: truncate wallet addresses, hide settlement amounts ("Confidential")
+## CPRA Ledger Steps
+
+The arbiter completes 3 steps (reduced from 4 with `finalizeCase`):
+
+| Step | Function | Available when |
+|------|----------|---------------|
+| 1. Register Case | `registerCase()` | Always (after deploy) |
+| 2. Record Deposit | `recordDeposit()` | `isFunded === true` |
+| 3. Finalize Case | `finalizeCase()` | `isReleased === true` AND steps 1 + 2 complete |
 
 ---
 
@@ -270,17 +345,22 @@ useSwitchChain()                  // network guard
 | 2026-03-11 | Created `requirements.md` with all library versions. Updated `README.md` with local + Sepolia testing instructions and end-to-end settlement flow. |
 | 2026-03-11 | Fixed `page.tsx`: address args now cast as `0x${string}`, added `isAddress` validation, inline address format errors, transaction error surface via `isError`/`error.message`, lawyer address displayed in UI. Added MetaMask nonce reset instructions to local testing section. |
 | 2026-03-11 | Completed Days 15–16 core wiring in `page.tsx`: `parseEventLogs` extracts escrow address from `EscrowCreated` receipt, `fund()` deposit section (Step 3), `approveRelease()` with live dot-progress indicator and per-wallet approval guard (Step 4), settlement complete screen (Step 5). Separate `useWriteContract` and `useWaitForTransactionReceipt` hooks for factory vs escrow. All escrow state refetches on tx confirmation. |
-| 2026-03-11 | Wired CPRA Ledger (Step 6) in `page.tsx`: 3rd `useWriteContract`/`useWaitForTransactionReceipt` for ledger txns; `lawFirmAdmin` read + `isAdmin` guard; deterministic `caseId = keccak256(escrowAddress)`; `casePurpose` form field; `ledgerDone` step-tracking state advanced by `useEffect` after each confirmed ledger tx; `LedgerStepRow` inline component; 4-step sequential UI (Register → Deposit → Disbursement → Close) with amber admin warning banner. Fixed TypeScript `unknown` → `ReactNode` error by casting all `useReadContract` data to explicit types. |
-| 2026-03-11 | Fixed `Web3Provider.tsx`: added explicit `transports` to `getDefaultConfig` — `hardhat` chain now uses `http('http://127.0.0.1:8545')`, `sepolia` uses `http()`. Without this, wagmi polled WalletConnect's cloud RPC for receipts instead of localhost, causing `useWaitForTransactionReceipt` to never resolve on Hardhat. |
-| 2026-03-11 | Built lawyer dashboard at `/dashboard` (`src/app/dashboard/page.tsx`): reads all escrow addresses via `factory.getDeployedEscrows()`, batch-reads state for each via `useReadContracts` (buyer, seller, settlementAmount, isFunded, isReleased, approvalCount), displays per-case cards with StatusBadge. Added "View All Cases →" link to main page header. Full end-to-end settlement flow confirmed working on Hardhat local. |
-| 2026-03-12 | Polish complete in `page.tsx`: wrong-network guard banner (switchChain to Hardhat/Sepolia), fixed bottom-right toast stack (success = green, error = red, 3.5 s auto-dismiss), `formatEther` for ETH display, `useChainId`/`useSwitchChain` network guard hooks. All three polish checklist items ticked. |
-| 2026-03-12 | PRD alignment sprint started (Week 4). Gap analysis complete. Pipeline: Phase 1 (network + terminology) → Phase 2 (onboarding + role routing) → Phase 3 (Ricardian generator) → Phase 4–6 (Client / Freelancer / Arbiter pages). localStorage used for cross-role state coordination (no backend). |
-| 2026-03-12 | Week 4 PRD alignment complete. All phases done: terminology rename (ETH→PAS, Buyer→Client, Seller→Freelancer, Lawyer→Arbiter), onboarding role-selector page, RoleGuard, RicardianGenerator (Philippine FSA template + SHA256), Client/Freelancer/Arbiter role pages, pending deals queue in Arbiter. Polkadot EVM Testnet added to Web3Provider (chain ID 420420417, RPC https://eth-rpc-testnet.polkadot.io/, PAS currency). |
-| 2026-03-12 | Bug fixes across all role pages: removed Fund Escrow from Arbiter (Client-only); rewrote Arbiter/Client pages to load on-chain history via `getDeployedEscrows()` + `useReadContracts` batch reads filtered by `lawyer`/`buyer` — persistent across page refreshes; added CPRA ledger progress persistence per escrow (`agartha_ledger_<addr>` localStorage); added `lawyer` field to Freelancer batch reads (8 reads/escrow); dashboard privacy: `truncAddr()` helper, settlement amounts hidden as "Confidential". TypeScript check passes with 0 errors. |
-| 2026-03-12 | Issue fix sprint (4 issues): (1) Deal code gating — Client generates `btoa(JSON.stringify(deal))` instead of writing to shared localStorage; Arbiter pastes code to decode + adds to private `agartha_my_pending_deals`; saves `agartha_deal_doc_<hash>` for agreement viewing. (2) Agreement viewing — exported `buildDocument` + `RicardianFormData` from RicardianGenerator; all three role pages batch-read `documentHash` on-chain (+1 read/escrow); View Agreement button when doc in localStorage; Import Agreement via agreement code (base64) for Freelancer; Arbiter "Copy Agreement Code" button per case card. (3) CPRALedger.sol rewritten — added `ILegalEscrow` interface, `caseRegistrar` mapping, `onlyCaseRegistrar` modifier; `registerCase` validates `keccak256(escrowAddr) == caseId` + `ILegalEscrow(escrow).lawyer() == msg.sender`; removed deployer-only restriction; `abis.ts` updated with `caseRegistrar` view function; Arbiter page admin guard + banner removed. (4) Dashboard — strips to `keccak256(escrowAddr)` (truncated) + status badge only; landing page adds "View Global Case Ledger →" link; dashboard links removed from client/arbiter pages. TypeScript check: 0 errors. |
-| 2026-03-12 | Supabase database integration. Replaced all localStorage deal/role/CPRA state with durable Supabase PostgreSQL backend. New DB tables: `users` (one wallet = one role, enforced at DB + API level), `deals` (client creates → arbiter claims via deal code → arbiter deploys → escrow_address set), `cpra_ledger_progress` (monotonic boolean steps, survives browser clears). New: `src/lib/supabase/server.ts` (service-role admin client, server-only); 7 API routes under `src/app/api/` (users/register, users/[wallet], deals, deals/claim, deals/by-hash/[hash], deals/[id]/deploy, ledger/[addr]). Updated: all 3 role pages + RoleGuard + onboarding page + requirements.md + README.md. Role conflict prevention at claim time (403 if arbiter = client or freelancer). Freelancer "Import Agreement Code" UI removed — agreement auto-fetched silently by documentHash. localStorage keys removed: `agartha_my_pending_deals`, `agartha_deal_doc_*`, `agartha_ledger_*`, `agartha_escrow_map`. `agartha_role` kept as performance cache. |
-| 2026-03-13 | Error handling sprint: `src/lib/errors.ts` (server-side logError → Supabase `error_logs` table); all 7 API routes updated to use logError + generic "Something went wrong" response; `src/app/error.tsx` global Next.js error boundary added. Client-side raw viem transaction errors removed from all 3 portal pages — replaced with generic "Transaction failed" UI. Deadline date input `min` attribute added to `RicardianGenerator.tsx` and `client/page.tsx` to block past date selection. |
-| 2026-03-13 | UX fixes: Switch Role button removed from client/arbiter/freelancer pages (roles are permanent). `deploy.js` fixed to merge `.env.local` (read existing → update only contract address keys → write back) instead of overwriting, preserving Supabase credentials. Web3Provider updated to target Polkadot EVM Testnet only (removed Hardhat + Sepolia chains since app is on Paseo). |
-| 2026-03-13 | Bug fixes: (1) Arbiter CPRA reload bug — extracted ledger progress fetch from `loadCase()` into a `useEffect` watching `deployedEscrowAddress`; progress now auto-loads from DB whenever a case address is set, preventing "stuck" record buttons after reload. (2) Arbiter pending queue — deployed deal now removed from queue immediately after `factory.createCase()` receipt; `fetchPendingDeals()` called after DB persist in the `factoryReceipt` useEffect. |
-| 2026-03-13 | Fix CPRA progress persistence root cause: `/api/ledger/[escrow_address]/route.ts` PUT handler changed from UPDATE (returned 404 if no row existed, silently swallowed by frontend `.catch(() => {})`) to UPSERT (`onConflict: 'escrow_address'`). Row is now created on first PUT if absent; monotonic OR logic preserved. Previously, progress was never written to DB when the arbiter deployed without a pending deal in the queue (no `cpra_ledger_progress` row pre-created), causing all Record buttons to reappear after every reload. |
-| 2026-03-13 | Pre-deployment acceptance workflow: Replaced deal code sharing with direct address-based routing. Client now inputs both freelancer AND arbiter wallet addresses with inline role validation (GET /api/users/[wallet]). Deals are created with status `pending_acceptance` and automatically appear in arbiter and freelancer queues. Both parties can view the rendered Ricardian contract (buildDocument from stored form_data) and click Accept or Reject. If either rejects → status: cancelled. If both accept → status: accepted → arbiter Ready to Deploy queue. New routes: POST /api/deals/[id]/accept, POST /api/deals/[id]/reject. Deleted: /api/deals/claim. DB columns added: arbiter_accepted (bool), freelancer_accepted (bool). TypeScript check: 0 errors. |
+| 2026-03-11 | Wired CPRA Ledger (Step 6) in `page.tsx`: 3rd `useWriteContract`/`useWaitForTransactionReceipt` for ledger txns; `lawFirmAdmin` read + `isAdmin` guard; deterministic `caseId = keccak256(escrowAddress)`; `casePurpose` form field; `ledgerDone` step-tracking state advanced by `useEffect` after each confirmed ledger tx; `LedgerStepRow` inline component; 4-step sequential UI (Register → Deposit → Disbursement → Close) with amber admin warning banner. |
+| 2026-03-11 | Fixed `Web3Provider.tsx`: added explicit `transports` to `getDefaultConfig` — `hardhat` chain now uses `http('http://127.0.0.1:8545')`, `sepolia` uses `http()`. Without this, wagmi polled WalletConnect's cloud RPC for receipts instead of localhost. |
+| 2026-03-11 | Built lawyer dashboard at `/dashboard`: reads all escrow addresses via `factory.getDeployedEscrows()`, batch-reads state for each via `useReadContracts`, displays per-case cards with StatusBadge. Full end-to-end settlement flow confirmed working on Hardhat local. |
+| 2026-03-12 | Polish complete: wrong-network guard banner (switchChain), toast stack (success = green, error = red, 3.5 s auto-dismiss), `formatEther` for ETH display, `useChainId`/`useSwitchChain` network guard hooks. |
+| 2026-03-12 | PRD alignment sprint: terminology rename (ETH→PAS, Buyer→Client, Seller→Freelancer, Lawyer→Arbiter), onboarding role-selector page, RoleGuard, RicardianGenerator (Philippine FSA template + SHA256), Client/Freelancer/Arbiter role pages, pending deals queue in Arbiter. Polkadot EVM Testnet added to Web3Provider. |
+| 2026-03-12 | Bug fixes: removed Fund Escrow from Arbiter; on-chain history via `getDeployedEscrows()` + `useReadContracts` batch reads filtered by role; CPRA ledger progress persistence; dashboard privacy (truncated addresses, no amounts). |
+| 2026-03-12 | Deal code system: `btoa(JSON.stringify(deal))` codes; Arbiter pastes code to decode; `buildDocument`+`RicardianFormData` exported; `documentHash` batch-read on-chain; CPRALedger rewritten with `caseRegistrar` mapping + `onlyCaseRegistrar` modifier. |
+| 2026-03-12 | Supabase database integration. Replaced all localStorage deal/role/CPRA state with Supabase PostgreSQL. New DB tables: `users`, `deals`, `cpra_ledger_progress`. 7 API routes added. Role conflict prevention at claim time. |
+| 2026-03-13 | Error handling sprint: `src/lib/errors.ts` (server-side logError → `error_logs` table); all API routes updated; global `error.tsx` boundary. Raw viem errors removed from portal pages. Deadline date `min` attribute added. |
+| 2026-03-13 | UX fixes: Switch Role button removed (roles are permanent). `deploy.js` fixed to merge `.env.local` instead of overwriting. Web3Provider targets Polkadot EVM Testnet only. |
+| 2026-03-13 | Bug fixes: CPRA reload bug fixed with `useEffect` watching `deployedEscrowAddress`. Arbiter pending queue auto-clears after deploy receipt. |
+| 2026-03-13 | CPRA UPSERT fix: `/api/ledger/[addr]` PUT changed from UPDATE to UPSERT (`onConflict: 'escrow_address'`) — row now created on first write if absent. |
+| 2026-03-13 | Pre-deployment acceptance workflow: Deal code sharing replaced with direct address-based routing. Client inputs both freelancer AND arbiter wallet addresses with inline role validation. Both must accept before arbiter can deploy. `POST /api/deals/[id]/accept`, `POST /api/deals/[id]/reject` added. `arbiter_accepted`, `freelancer_accepted` DB columns added. |
+| 2026-03-13 | File upload workflow: `RicardianGenerator.tsx` form replaced with file upload for deal creation. `POST /api/deals/upload` uploads to Supabase Storage and returns SHA256 hash. `GET /api/deals/[id]/document` returns signed URL. `DELETE /api/deals/[id]` added for client to delete cancelled deals. `ViewDocumentButton` component added to all three portals. |
+| 2026-03-13 | Contract upgrade — `approveCancellation()` added to `LegalEscrow.sol`: 2-of-3 multisig; on 2nd approval sets `isCancelled = true` and refunds balance to buyer. New state: `isCancelled`, `cancelApprovalCount`, `hasCancelApproved(address)`. Events: `CancelApproved`, `Refunded`. |
+| 2026-03-13 | Contract upgrade — `finalizeCase(caseId, amount)` added to `CPRALedger.sol`: records disbursement and closes case in a single transaction (replaces separate `recordDisbursement` + `closeCase` calls). |
+| 2026-03-13 | Contracts redeployed to Polkadot Paseo EVM Testnet. New addresses written to `.env.local`: Factory `0x020C80A17aD5B2aC1a4F3D799A18122FCd5079B6`, CPRALedger `0x0D46ca33610BB7529AC9C1a30ABf30D08a82C9d5`. ABI updated in `abis.ts` with all new entries. |
+| 2026-03-13 | Frontend — cancellation UI across all 3 portals: 3-dot / `/3` cancel approval counter; mutual exclusivity (wallet that approved release cannot approve cancellation and vice versa); "Deal Cancelled" banners; `isCancelled` condition hides release section when cancelled. Multicall strides updated: client → 11 reads/escrow, freelancer → 12 reads/escrow. |
+| 2026-03-13 | Frontend — CPRA ledger reduced from 4 steps to 3: "Record Disbursement" + "Close Case" rows replaced by single "Finalize Case (Disburse + Close)" row calling `finalizeCase()`. Finalize Case gated on `isReleased AND ledgerDone.registered AND ledgerDone.depositRecorded`. `LedgerStep` type updated (`'finalize'` marks both `disbursementRecorded` and `closed`). TypeScript check: 0 errors. |

@@ -104,6 +104,13 @@ contract CPRALedger {
         emit CaseClosed(_caseId);
     }
 
+    // Close the case record without disbursement — used when the escrow was cancelled and funds were refunded
+    function closeCancelledCase(bytes32 _caseId) external onlyCaseRegistrar(_caseId) {
+        require(caseLedger[_caseId].isClosed == false, "Case already closed");
+        caseLedger[_caseId].isClosed = true;
+        emit CaseClosed(_caseId);
+    }
+
     function getTotalCases() external view returns (uint256) {
         return caseIds.length;
     }

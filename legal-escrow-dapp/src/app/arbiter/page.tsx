@@ -52,7 +52,7 @@ function ViewDocumentButton({ dealId, walletAddress }: { dealId: string; walletA
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type ToastEntry = { id: number; message: string; type: 'success' | 'error' };
-type LedgerStep = 'register' | 'deposit' | 'disburse' | 'close' | 'finalize';
+type LedgerStep = 'register' | 'deposit' | 'disburse' | 'close' | 'finalize' | 'cancel-close';
 type LedgerDone = { registered: boolean; depositRecorded: boolean; disbursementRecorded: boolean; closed: boolean };
 
 interface MyCaseItem {
@@ -348,7 +348,7 @@ export default function ArbiterPage() {
       registered:           ledgerDone.registered           || currentLedgerStep === 'register',
       depositRecorded:      ledgerDone.depositRecorded       || currentLedgerStep === 'deposit',
       disbursementRecorded: ledgerDone.disbursementRecorded  || currentLedgerStep === 'disburse' || currentLedgerStep === 'finalize',
-      closed:               ledgerDone.closed                || currentLedgerStep === 'close'    || currentLedgerStep === 'finalize',
+      closed:               ledgerDone.closed                || currentLedgerStep === 'close'    || currentLedgerStep === 'finalize' || currentLedgerStep === 'cancel-close',
     };
     setLedgerDone(next);
     showToast('Ledger entry recorded');
@@ -515,6 +515,12 @@ export default function ArbiterPage() {
     if (!caseId) return;
     setCurrentLedgerStep('finalize');
     writeLedger({ address: LEDGER_ADDRESS, abi: LEDGER_ABI, functionName: 'finalizeCase', args: [caseId, parseEther(settlementAmount)] });
+  };
+
+  const handleCloseCancelledCase = () => {
+    if (!caseId) return;
+    setCurrentLedgerStep('cancel-close');
+    writeLedger({ address: LEDGER_ADDRESS, abi: LEDGER_ABI, functionName: 'closeCancelledCase', args: [caseId] });
   };
 
   // ── UI helpers ───────────────────────────────────────────────────────────────
@@ -960,7 +966,11 @@ export default function ArbiterPage() {
               </div>
               {hasCurrentWalletApproved ? (
                 <div className="p-3 bg-green-50 text-green-800 rounded-md border border-green-200 text-sm font-medium">
-                  This wallet has already approved.
+                  This wallet has already approved release.
+                </div>
+              ) : hasCurrentWalletCancelApproved ? (
+                <div className="p-3 bg-amber-50 text-amber-800 rounded-md border border-amber-200 text-sm font-medium">
+                  This wallet approved cancellation — cannot also approve release.
                 </div>
               ) : (
                 <button onClick={handleApprove} disabled={isEscrowPending}
@@ -1005,9 +1015,9 @@ export default function ArbiterPage() {
                 <span className="text-sm font-medium text-slate-600">Cancel approvals:</span>
                 <span className="text-2xl font-bold text-slate-800">{String(cancelApprovalCount ?? 0)}</span>
                 <span className="text-slate-400 text-lg">/</span>
-                <span className="text-2xl font-bold text-slate-400">2</span>
+                <span className="text-2xl font-bold text-slate-400">3</span>
                 <div className="flex gap-2 ml-1">
-                  {[0, 1].map((i) => (
+                  {[0, 1, 2].map((i) => (
                     <div key={i} className={`w-5 h-5 rounded-full border-2 ${
                       i < Number(cancelApprovalCount ?? 0) ? 'bg-red-500 border-red-600' : 'bg-slate-200 border-slate-300'
                     }`} />
@@ -1017,6 +1027,10 @@ export default function ArbiterPage() {
               {hasCurrentWalletCancelApproved ? (
                 <div className="p-3 bg-amber-50 text-amber-800 rounded-md border border-amber-200 text-sm font-medium">
                   This wallet has approved cancellation. Waiting for another party.
+                </div>
+              ) : hasCurrentWalletApproved ? (
+                <div className="p-3 bg-green-50 text-green-800 rounded-md border border-green-200 text-sm font-medium">
+                  This wallet approved release — cannot also approve cancellation.
                 </div>
               ) : (
                 <button onClick={handleApproveCancellation} disabled={isEscrowPending}
@@ -1035,29 +1049,52 @@ export default function ArbiterPage() {
                 Record each phase of the settlement to the on-chain audit trail.
               </p>
 
-              <div className="rounded-md border border-slate-200 bg-white divide-y divide-slate-100">
-                <LedgerStepRow
-                  label="1. Register Case"
-                  available={true}
-                  done={ledgerDone.registered}
-                  onAction={handleRegisterCase}
-                  disabled={isLedgerPending}
-                />
-                <LedgerStepRow
-                  label="2. Record Deposit"
-                  available={!!isFunded}
-                  done={ledgerDone.depositRecorded}
-                  onAction={handleRecordDeposit}
-                  disabled={isLedgerPending}
-                />
-                <LedgerStepRow
-                  label="3. Finalize Case (Disburse + Close)"
-                  available={!!isReleased}
-                  done={ledgerDone.disbursementRecorded && ledgerDone.closed}
-                  onAction={handleFinalizeCase}
-                  disabled={isLedgerPending}
-                />
-              </div>
+              {!isReleased && !isCancelled ? (
+                <div className="rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-500 text-center">
+                  Awaiting deal outcome. CPRA recording will unlock once the deal is released or cancelled.
+                </div>
+              ) : isReleased ? (
+                <div className="rounded-md border border-slate-200 bg-white divide-y divide-slate-100">
+                  <LedgerStepRow
+                    label="1. Register Case"
+                    available={!!isReleased}
+                    done={ledgerDone.registered}
+                    onAction={handleRegisterCase}
+                    disabled={isLedgerPending}
+                  />
+                  <LedgerStepRow
+                    label="2. Record Deposit"
+                    available={!!isReleased && ledgerDone.registered}
+                    done={ledgerDone.depositRecorded}
+                    onAction={handleRecordDeposit}
+                    disabled={isLedgerPending}
+                  />
+                  <LedgerStepRow
+                    label="3. Finalize Case (Disburse + Close)"
+                    available={!!isReleased && ledgerDone.registered && ledgerDone.depositRecorded}
+                    done={ledgerDone.disbursementRecorded && ledgerDone.closed}
+                    onAction={handleFinalizeCase}
+                    disabled={isLedgerPending}
+                  />
+                </div>
+              ) : (
+                <div className="rounded-md border border-slate-200 bg-white divide-y divide-slate-100">
+                  <LedgerStepRow
+                    label="1. Register Case"
+                    available={!!isCancelled}
+                    done={ledgerDone.registered}
+                    onAction={handleRegisterCase}
+                    disabled={isLedgerPending}
+                  />
+                  <LedgerStepRow
+                    label="2. Close Cancelled Case"
+                    available={!!isCancelled && ledgerDone.registered}
+                    done={ledgerDone.closed}
+                    onAction={handleCloseCancelledCase}
+                    disabled={isLedgerPending}
+                  />
+                </div>
+              )}
 
               {isLedgerError && (
                 <div className="mt-3 p-3 bg-red-100 text-red-800 rounded-md border border-red-300 text-xs">
