@@ -1,7 +1,7 @@
 // Local: populated automatically by backend/scripts/deploy.js via .env.local
-// Sepolia: hardcoded fallback for testnet use
-export const FACTORY_ADDRESS = (process.env.NEXT_PUBLIC_FACTORY_ADDRESS ?? "0x688c0611a5691B7c1F09a694bf4ADfb456a58Cf7") as `0x${string}`;
-export const LEDGER_ADDRESS = (process.env.NEXT_PUBLIC_LEDGER_ADDRESS ?? "0x4815A8Ba613a3eB21A920739dE4cA7C439c7e1b1") as `0x${string}`;
+// Polkadot testnet: hardcoded fallback
+export const FACTORY_ADDRESS = (process.env.NEXT_PUBLIC_FACTORY_ADDRESS ?? "0xaA9c13768e1427762e3AA77CdD0c78429994205E") as `0x${string}`;
+export const LEDGER_ADDRESS = (process.env.NEXT_PUBLIC_LEDGER_ADDRESS ?? "0x49aEea0906AC3c17d0A77554cbaf488Dd83769BC") as `0x${string}`;
 
 export const FACTORY_ABI = [
 	{
@@ -327,6 +327,52 @@ export const ESCROW_ABI =[
 		],
 		"stateMutability": "view",
 		"type": "function"
+	},
+	{
+		"inputs": [],
+		"name": "approveCancellation",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [],
+		"name": "isCancelled",
+		"outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [],
+		"name": "cancelApprovalCount",
+		"outputs": [{ "internalType": "uint8", "name": "", "type": "uint8" }],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [{ "internalType": "address", "name": "", "type": "address" }],
+		"name": "hasCancelApproved",
+		"outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{ "indexed": true, "internalType": "address", "name": "approver", "type": "address" },
+			{ "indexed": false, "internalType": "uint8", "name": "currentCancelApprovals", "type": "uint8" }
+		],
+		"name": "CancelApproved",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{ "indexed": true, "internalType": "address", "name": "buyer", "type": "address" },
+			{ "indexed": false, "internalType": "uint256", "name": "amount", "type": "uint256" }
+		],
+		"name": "Refunded",
+		"type": "event"
 	}
 ];
 
@@ -582,6 +628,35 @@ export const LEDGER_ABI =[
 			}
 		],
 		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "bytes32",
+				"name": "",
+				"type": "bytes32"
+			}
+		],
+		"name": "caseRegistrar",
+		"outputs": [
+			{
+				"internalType": "address",
+				"name": "",
+				"type": "address"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{ "internalType": "bytes32", "name": "_caseId", "type": "bytes32" },
+			{ "internalType": "uint256", "name": "_amount", "type": "uint256" }
+		],
+		"name": "finalizeCase",
+		"outputs": [],
+		"stateMutability": "nonpayable",
 		"type": "function"
 	}
 ];
