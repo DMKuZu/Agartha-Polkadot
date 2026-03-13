@@ -6,9 +6,9 @@
 
 ## Current Status: Day 21 of 21
 
-**Phase:** Production-ready on Polkadot EVM Testnet — Supabase backend, error handling, and all UX issues resolved
+**Phase:** Production-ready on Polkadot EVM Testnet — Pre-deployment acceptance workflow, direct address routing, both parties must accept before arbiter can deploy
 
-All features complete and deployed to Polkadot Paseo Testnet. Recent changes: Supabase DB replaces all localStorage (users, deals, cpra_ledger_progress tables); 7 API routes; server-side error logging to `error_logs` table; generic client-facing error messages; raw client-side transaction errors replaced with "Transaction failed. Please try again."; deadline past-date validation (`min` attribute); CPRA progress auto-loaded from DB on case load (reload-safe); deployed deal removed from arbiter pending queue after escrow creation; Switch Role button removed (roles are permanent); `deploy.js` merges `.env.local` instead of overwriting.
+All features complete and deployed to Polkadot Paseo Testnet. Recent changes: Client inputs both freelancer AND arbiter wallet addresses at deal creation (inline role validation via GET /api/users); deals automatically appear in both parties' "Pending Acceptance" queues (no deal code sharing); both arbiter and freelancer can view rendered Ricardian contract and click Accept/Reject; if either rejects → status: cancelled; if both accept → status: accepted → arbiter can deploy; deal code claim flow removed; new API routes: POST /api/deals/[id]/accept, POST /api/deals/[id]/reject; DB columns added: arbiter_accepted, freelancer_accepted; CPRA UPSERT fix for progress persistence.
 
 ---
 
@@ -93,11 +93,12 @@ legal-escrow-dapp/
 │   │   │   │   └── [wallet_address]/
 │   │   │   │       └── route.ts      GET — fetch registered role for wallet
 │   │   │   ├── deals/
-│   │   │   │   ├── route.ts          POST create deal / GET list by wallet
-│   │   │   │   ├── claim/route.ts    POST — arbiter claims deal via deal code
+│   │   │   │   ├── route.ts          POST create deal (validates freelancer+arbiter roles) / GET list by wallet
 │   │   │   │   ├── by-hash/
 │   │   │   │   │   └── [document_hash]/route.ts  GET form_data by on-chain hash
 │   │   │   │   └── [id]/
+│   │   │   │       ├── accept/route.ts  POST — arbiter or freelancer accepts deal
+│   │   │   │       ├── reject/route.ts  POST — arbiter or freelancer rejects deal
 │   │   │   │       └── deploy/route.ts  PATCH — set escrow_address after factory deploy
 │   │   │   └── ledger/
 │   │   │       └── [escrow_address]/route.ts  GET+PUT CPRA step flags
@@ -282,3 +283,4 @@ useSwitchChain()                  // network guard
 | 2026-03-13 | UX fixes: Switch Role button removed from client/arbiter/freelancer pages (roles are permanent). `deploy.js` fixed to merge `.env.local` (read existing → update only contract address keys → write back) instead of overwriting, preserving Supabase credentials. Web3Provider updated to target Polkadot EVM Testnet only (removed Hardhat + Sepolia chains since app is on Paseo). |
 | 2026-03-13 | Bug fixes: (1) Arbiter CPRA reload bug — extracted ledger progress fetch from `loadCase()` into a `useEffect` watching `deployedEscrowAddress`; progress now auto-loads from DB whenever a case address is set, preventing "stuck" record buttons after reload. (2) Arbiter pending queue — deployed deal now removed from queue immediately after `factory.createCase()` receipt; `fetchPendingDeals()` called after DB persist in the `factoryReceipt` useEffect. |
 | 2026-03-13 | Fix CPRA progress persistence root cause: `/api/ledger/[escrow_address]/route.ts` PUT handler changed from UPDATE (returned 404 if no row existed, silently swallowed by frontend `.catch(() => {})`) to UPSERT (`onConflict: 'escrow_address'`). Row is now created on first PUT if absent; monotonic OR logic preserved. Previously, progress was never written to DB when the arbiter deployed without a pending deal in the queue (no `cpra_ledger_progress` row pre-created), causing all Record buttons to reappear after every reload. |
+| 2026-03-13 | Pre-deployment acceptance workflow: Replaced deal code sharing with direct address-based routing. Client now inputs both freelancer AND arbiter wallet addresses with inline role validation (GET /api/users/[wallet]). Deals are created with status `pending_acceptance` and automatically appear in arbiter and freelancer queues. Both parties can view the rendered Ricardian contract (buildDocument from stored form_data) and click Accept or Reject. If either rejects → status: cancelled. If both accept → status: accepted → arbiter Ready to Deploy queue. New routes: POST /api/deals/[id]/accept, POST /api/deals/[id]/reject. Deleted: /api/deals/claim. DB columns added: arbiter_accepted (bool), freelancer_accepted (bool). TypeScript check: 0 errors. |

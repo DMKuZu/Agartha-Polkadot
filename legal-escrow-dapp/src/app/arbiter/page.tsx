@@ -34,8 +34,8 @@ interface MyCaseItem {
 }
 
 interface PendingDealItem {
-  id: string;               // deal_code_id (Date.now().toString(36))
-  dbId: string;             // DB UUID — needed for PATCH /api/deals/[id]/deploy
+  id: string;               // deal_code_id
+  dbId: string;             // DB UUID — needed for accept/reject/deploy
   clientAddress: string;
   freelancerAddress: string;
   amount: string;
@@ -43,6 +43,8 @@ interface PendingDealItem {
   deliverables: string;
   deadline: string;
   documentHash: string;
+  formData: any;
+  status: string;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -58,7 +60,6 @@ export default function ArbiterPage() {
     writeContract: writeFactory,
     isPending: isFactoryPending,
     isError: isFactoryError,
-    error: factoryError,
     data: factoryTxHash,
   } = useWriteContract();
 
@@ -66,7 +67,6 @@ export default function ArbiterPage() {
     writeContract: writeEscrow,
     isPending: isEscrowPending,
     isError: isEscrowError,
-    error: escrowError,
     data: escrowTxHash,
   } = useWriteContract();
 
@@ -74,7 +74,6 @@ export default function ArbiterPage() {
     writeContract: writeLedger,
     isPending: isLedgerPending,
     isError: isLedgerError,
-    error: ledgerError,
     data: ledgerTxHash,
   } = useWriteContract();
 
@@ -316,9 +315,13 @@ export default function ArbiterPage() {
 
   // ── Pending deals — fetched from DB ──────────────────────────────────────────
 
-  const [pendingDeals, setPendingDeals] = useState<PendingDealItem[]>([]);
+  const [allPendingDeals, setAllPendingDeals] = useState<PendingDealItem[]>([]);
   const [expandedDeal, setExpandedDeal] = useState<string | null>(null);
-  const [dealCodeInput, setDealCodeInput] = useState<string>('');
+  const [acceptingDealId, setAcceptingDealId] = useState<string | null>(null);
+  const [rejectingDealId, setRejectingDealId] = useState<string | null>(null);
+
+  const pendingAcceptanceDeals = allPendingDeals.filter(d => d.status === 'pending_acceptance');
+  const readyToDeployDeals     = allPendingDeals.filter(d => d.status === 'accepted');
 
   const fetchPendingDeals = useCallback(async () => {
     if (!address) return;
@@ -326,7 +329,7 @@ export default function ArbiterPage() {
       const r = await fetch(`/api/deals?wallet_address=${address}`);
       const { deals } = await r.json();
       if (!Array.isArray(deals)) return;
-      const pending: PendingDealItem[] = deals
+      const items: PendingDealItem[] = deals
         .filter((d: any) => !d.escrow_address)
         .map((d: any) => ({
           id:                d.deal_code_id,
@@ -338,8 +341,10 @@ export default function ArbiterPage() {
           deliverables:      d.form_data?.deliverables ?? '',
           deadline:          d.form_data?.deadline ?? '',
           documentHash:      d.document_hash,
+          formData:          d.form_data,
+          status:            d.status,
         }));
-      setPendingDeals(pending);
+      setAllPendingDeals(items);
     } catch {
       // ignore
     }
@@ -349,23 +354,43 @@ export default function ArbiterPage() {
     if (isConnected && address) fetchPendingDeals();
   }, [isConnected, address, fetchPendingDeals]);
 
-  const handleDecodeDealCode = async () => {
-    if (!dealCodeInput.trim() || !address) return;
+  const handleAcceptDeal = async (deal: PendingDealItem) => {
+    if (!address) return;
+    setAcceptingDealId(deal.dbId);
     try {
-      const r = await fetch('/api/deals/claim', {
+      const r = await fetch(`/api/deals/${deal.dbId}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deal_code: dealCodeInput.trim(), arbiter_address: address }),
+        body: JSON.stringify({ wallet_address: address }),
       });
       const data = await r.json();
-      if (r.status === 403) { showToast(data.error || 'Forbidden', 'error'); return; }
-      if (r.status === 409) { showToast('Deal already claimed by another arbiter', 'error'); return; }
-      if (!r.ok) { showToast(data.error || 'Invalid deal code', 'error'); return; }
-      setDealCodeInput('');
-      showToast('Deal loaded from code');
+      if (!r.ok) { showToast(data.error || 'Could not accept deal', 'error'); return; }
+      showToast('Deal accepted');
       fetchPendingDeals();
     } catch {
-      showToast('Invalid deal code', 'error');
+      showToast('Could not accept deal', 'error');
+    } finally {
+      setAcceptingDealId(null);
+    }
+  };
+
+  const handleRejectDeal = async (deal: PendingDealItem) => {
+    if (!address) return;
+    setRejectingDealId(deal.dbId);
+    try {
+      const r = await fetch(`/api/deals/${deal.dbId}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet_address: address }),
+      });
+      const data = await r.json();
+      if (!r.ok) { showToast(data.error || 'Could not reject deal', 'error'); return; }
+      showToast('Deal rejected');
+      fetchPendingDeals();
+    } catch {
+      showToast('Could not reject deal', 'error');
+    } finally {
+      setRejectingDealId(null);
     }
   };
 
@@ -471,7 +496,7 @@ export default function ArbiterPage() {
           {/* Header */}
           <div className="text-center">
             <h1 className="text-3xl font-bold mb-3 text-slate-800">Arbiter Portal</h1>
-            <p className="text-slate-500 mb-4">Review pending deals, deploy escrow contracts, and manage CPRA compliance.</p>
+            <p className="text-slate-500 mb-4">Review and accept deals, deploy escrow contracts, and manage CPRA compliance.</p>
             <div className="flex justify-center mb-4"><ConnectButton /></div>
           </div>
 
@@ -597,71 +622,84 @@ export default function ArbiterPage() {
             </div>
           )}
 
-          {/* Load Deal from Code + Pending Deals Queue */}
+          {/* Pending Acceptance Queue */}
           {isConnected && (
-            <div className="mb-8 p-6 bg-indigo-50 rounded-lg border border-indigo-200">
-              <h2 className="text-lg font-semibold mb-3 text-indigo-800">Load Deal from Code</h2>
-              <p className="text-xs text-indigo-600 mb-3">
-                Ask your Client to generate a deal code and paste it here. Only deals loaded by you are visible.
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Paste deal code here…"
-                  value={dealCodeInput}
-                  onChange={(e) => setDealCodeInput(e.target.value)}
-                  className="flex-1 p-2 text-sm border border-indigo-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white text-slate-700"
-                />
+            <div className="mb-8 p-6 bg-amber-50 rounded-lg border border-amber-200">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-semibold text-amber-800">Pending Acceptance</h2>
                 <button
-                  onClick={handleDecodeDealCode}
-                  disabled={!dealCodeInput.trim()}
-                  className="text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md transition-colors disabled:bg-slate-400"
+                  onClick={fetchPendingDeals}
+                  className="text-xs text-amber-600 hover:text-amber-900 border border-amber-200 px-3 py-1 rounded transition-colors"
                 >
-                  Load
+                  Refresh
                 </button>
               </div>
+              <p className="text-xs text-amber-700 mb-4">
+                Deals created by Clients that require your acceptance before deployment.
+              </p>
 
-              {pendingDeals.length > 0 && (
-                <div className="mt-5 space-y-3">
-                  <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">Your Deal Queue</p>
-                  {pendingDeals.map((deal) => (
-                    <div key={deal.id} className="bg-white rounded-md border border-indigo-200 p-4">
+              {pendingAcceptanceDeals.length === 0 ? (
+                <p className="text-sm text-amber-600">No deals awaiting your acceptance.</p>
+              ) : (
+                <div className="space-y-3">
+                  {pendingAcceptanceDeals.map((deal) => (
+                    <div key={deal.dbId} className="bg-white rounded-md border border-amber-200 p-4">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-slate-800 truncate">{deal.title}</p>
                           <p className="text-xs text-slate-500 mt-0.5">
                             {deal.amount} PAS · Client: <span className="font-mono">{deal.clientAddress?.slice(0, 10)}…</span>
                           </p>
+                          {deal.deadline && (
+                            <p className="text-xs text-slate-400 mt-0.5">Deadline: {deal.deadline}</p>
+                          )}
                         </div>
                         <div className="flex gap-2 flex-shrink-0">
                           <button
-                            onClick={() => setExpandedDeal(expandedDeal === deal.id ? null : deal.id)}
-                            className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded transition-colors"
+                            onClick={() => setExpandedDeal(expandedDeal === deal.dbId ? null : deal.dbId)}
+                            className="text-xs text-amber-700 hover:text-amber-900 border border-amber-200 px-2 py-1 rounded transition-colors"
                           >
-                            {expandedDeal === deal.id ? 'Collapse' : 'Review'}
+                            {expandedDeal === deal.dbId ? 'Collapse' : 'Review'}
                           </button>
                           <button
-                            onClick={() => { prefillFromDeal(deal); setExpandedDeal(null); }}
-                            className="text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded transition-colors"
+                            onClick={() => handleRejectDeal(deal)}
+                            disabled={rejectingDealId === deal.dbId || acceptingDealId === deal.dbId}
+                            className="text-xs font-semibold bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1 rounded transition-colors disabled:bg-slate-100 disabled:text-slate-400"
                           >
-                            Deploy
+                            {rejectingDealId === deal.dbId ? 'Rejecting…' : 'Reject'}
+                          </button>
+                          <button
+                            onClick={() => handleAcceptDeal(deal)}
+                            disabled={acceptingDealId === deal.dbId || rejectingDealId === deal.dbId}
+                            className="text-xs font-semibold bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded transition-colors disabled:bg-slate-400"
+                          >
+                            {acceptingDealId === deal.dbId ? 'Accepting…' : 'Accept'}
                           </button>
                         </div>
                       </div>
 
-                      {expandedDeal === deal.id && (
-                        <div className="mt-3 pt-3 border-t border-indigo-100 text-xs space-y-1.5">
-                          <div><span className="text-slate-500">Client:</span> <span className="font-mono text-slate-700 break-all">{deal.clientAddress}</span></div>
-                          <div><span className="text-slate-500">Freelancer:</span> <span className="font-mono text-slate-700 break-all">{deal.freelancerAddress}</span></div>
-                          <div><span className="text-slate-500">Amount:</span> <span className="font-semibold text-slate-700">{deal.amount} PAS</span></div>
-                          <div><span className="text-slate-500">Deadline:</span> <span className="text-slate-700">{deal.deadline}</span></div>
-                          {deal.deliverables && (
-                            <div>
-                              <span className="text-slate-500">Deliverables:</span>
-                              <p className="mt-1 text-slate-700 bg-slate-50 rounded p-2 whitespace-pre-wrap">{deal.deliverables}</p>
+                      {expandedDeal === deal.dbId && (
+                        <div className="mt-3 pt-3 border-t border-amber-100 space-y-2">
+                          <div className="text-xs space-y-1.5">
+                            <div><span className="text-slate-500">Client:</span> <span className="font-mono text-slate-700 break-all">{deal.clientAddress}</span></div>
+                            <div><span className="text-slate-500">Freelancer:</span> <span className="font-mono text-slate-700 break-all">{deal.freelancerAddress}</span></div>
+                            <div><span className="text-slate-500">Amount:</span> <span className="font-semibold text-slate-700">{deal.amount} PAS</span></div>
+                            {deal.deadline && <div><span className="text-slate-500">Deadline:</span> <span className="text-slate-700">{deal.deadline}</span></div>}
+                            {deal.deliverables && (
+                              <div>
+                                <span className="text-slate-500">Deliverables:</span>
+                                <p className="mt-1 text-slate-700 bg-slate-50 rounded p-2 whitespace-pre-wrap">{deal.deliverables}</p>
+                              </div>
+                            )}
+                          </div>
+                          {deal.formData && (
+                            <div className="mt-2">
+                              <p className="text-xs font-medium text-slate-600 mb-1">Service Agreement:</p>
+                              <pre className="bg-slate-50 border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
+                                {buildDocument(deal.formData as RicardianFormData)}
+                              </pre>
                             </div>
                           )}
-                          <div><span className="text-slate-500">Document Hash:</span> <span className="font-mono text-slate-700 break-all">{deal.documentHash}</span></div>
                         </div>
                       )}
                     </div>
@@ -671,11 +709,74 @@ export default function ArbiterPage() {
             </div>
           )}
 
+          {/* Ready to Deploy Queue */}
+          {isConnected && readyToDeployDeals.length > 0 && (
+            <div className="mb-8 p-6 bg-indigo-50 rounded-lg border border-indigo-200">
+              <h2 className="text-lg font-semibold mb-3 text-indigo-800">Ready to Deploy</h2>
+              <p className="text-xs text-indigo-600 mb-4">
+                Both parties have accepted. Click Deploy to pre-fill the form below and deploy the escrow contract.
+              </p>
+              <div className="space-y-3">
+                {readyToDeployDeals.map((deal) => (
+                  <div key={deal.dbId} className="bg-white rounded-md border border-indigo-200 p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-800 truncate">{deal.title}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {deal.amount} PAS · Client: <span className="font-mono">{deal.clientAddress?.slice(0, 10)}…</span>
+                        </p>
+                      </div>
+                      <div className="flex gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => setExpandedDeal(expandedDeal === deal.dbId ? null : deal.dbId)}
+                          className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded transition-colors"
+                        >
+                          {expandedDeal === deal.dbId ? 'Collapse' : 'Review'}
+                        </button>
+                        <button
+                          onClick={() => { prefillFromDeal(deal); setExpandedDeal(null); }}
+                          className="text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded transition-colors"
+                        >
+                          Deploy
+                        </button>
+                      </div>
+                    </div>
+
+                    {expandedDeal === deal.dbId && (
+                      <div className="mt-3 pt-3 border-t border-indigo-100 space-y-2">
+                        <div className="text-xs space-y-1.5">
+                          <div><span className="text-slate-500">Client:</span> <span className="font-mono text-slate-700 break-all">{deal.clientAddress}</span></div>
+                          <div><span className="text-slate-500">Freelancer:</span> <span className="font-mono text-slate-700 break-all">{deal.freelancerAddress}</span></div>
+                          <div><span className="text-slate-500">Amount:</span> <span className="font-semibold text-slate-700">{deal.amount} PAS</span></div>
+                          {deal.deadline && <div><span className="text-slate-500">Deadline:</span> <span className="text-slate-700">{deal.deadline}</span></div>}
+                          {deal.deliverables && (
+                            <div>
+                              <span className="text-slate-500">Deliverables:</span>
+                              <p className="mt-1 text-slate-700 bg-slate-50 rounded p-2 whitespace-pre-wrap">{deal.deliverables}</p>
+                            </div>
+                          )}
+                        </div>
+                        {deal.formData && (
+                          <div className="mt-2">
+                            <p className="text-xs font-medium text-slate-600 mb-1">Service Agreement:</p>
+                            <pre className="bg-slate-50 border border-slate-200 rounded p-3 text-xs text-slate-700 whitespace-pre-wrap font-mono overflow-auto max-h-56">
+                              {buildDocument(deal.formData as RicardianFormData)}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Step 1: Document Hash */}
           <div className="mt-4 p-6 bg-slate-50 rounded-lg border border-slate-200">
             <h2 className="text-xl font-semibold mb-1 text-slate-700">1. Document Hash</h2>
             <p className="text-sm text-slate-500 mb-3">
-              Pre-filled from a pending deal, or enter a hash manually.
+              Pre-filled from a ready deal, or enter a hash manually.
             </p>
             <input
               type="text"
