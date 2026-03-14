@@ -173,6 +173,11 @@ Supported networks: Polkadot EVM Testnet (420420417), Hardhat local (31337), Sep
 
 ## Recent Changes & Fixes
 
+### Debug Logging Cleanup ✅
+- **File:** `src/app/arbiter/page.tsx`
+- **Change:** Removed all debug `console.log()` statements from the caseDealInfo fetch effect (lines 205-236)
+- **Impact:** No functional change; console output is now clean in production
+
 ### View Document Button Implementation ✅
 - **Commit:** 9fc8041
 - **Change:** Full integration of document viewing across all portals with signed URLs
@@ -209,12 +214,11 @@ Supported networks: Polkadot EVM Testnet (420420417), Hardhat local (31337), Sep
 - **Current behavior:** Fallback to `by-hash` lookup, but if document hash doesn't match DB, still no button
 - **Note:** First, middle, and last cases in a typical session may show this if they were deployed outside the normal workflow
 
-### Issue #2: Debug Logging in Arbiter Page ⚠️
-**Status:** CODE CLEANUP NEEDED
-- **File:** `src/app/arbiter/page.tsx` lines 205-236
-- **Problem:** Multiple `console.log()` statements for debugging caseDealInfo fetching
-- **Impact:** None on functionality, but should be removed for production
-- **Action:** Remove console.log statements before final deployment
+### Issue #2: Debug Logging in Arbiter Page ✅
+**Status:** RESOLVED
+- **File:** `src/app/arbiter/page.tsx`
+- **Fix:** Removed all debug `console.log()` statements from the caseDealInfo fetch effect
+- **Impact:** None on functionality; console is now clean in production
 
 ### Issue #3: RoleGuard Redirect Timing ℹ️
 **Status:** MINOR / ACCEPTABLE
@@ -244,7 +248,7 @@ Supported networks: Polkadot EVM Testnet (420420417), Hardhat local (31337), Sep
 
 ## Next Steps / Future Improvements
 
-1. **Critical:** Remove debug logging from arbiter page
+1. ~~**Critical:** Remove debug logging from arbiter page~~ ✅ Done
 2. **Enhancement:** Handle externally deployed contracts (sync DB or manual linking)
 3. **Feature:** Auto-sync deals when contract is first detected on-chain
 4. **Performance:** Consider caching for CPRA ledger queries
