@@ -209,12 +209,11 @@ Supported networks: Polkadot EVM Testnet (420420417), Hardhat local (31337), Sep
 - **Current behavior:** Fallback to `by-hash` lookup, but if document hash doesn't match DB, still no button
 - **Note:** First, middle, and last cases in a typical session may show this if they were deployed outside the normal workflow
 
-### Issue #2: Debug Logging in Arbiter Page ⚠️
-**Status:** CODE CLEANUP NEEDED
-- **File:** `src/app/arbiter/page.tsx` lines 205-236
-- **Problem:** Multiple `console.log()` statements for debugging caseDealInfo fetching
-- **Impact:** None on functionality, but should be removed for production
-- **Action:** Remove console.log statements before final deployment
+### Issue #2: Debug Logging in Arbiter Page ✅
+**Status:** RESOLVED
+- **File:** `src/app/arbiter/page.tsx`
+- **Change:** Removed all `console.log()` debug statements from caseDealInfo fetching useEffect
+- **Impact:** Production-clean output; no functional change
 
 ### Issue #3: RoleGuard Redirect Timing ℹ️
 **Status:** MINOR / ACCEPTABLE
@@ -244,11 +243,10 @@ Supported networks: Polkadot EVM Testnet (420420417), Hardhat local (31337), Sep
 
 ## Next Steps / Future Improvements
 
-1. **Critical:** Remove debug logging from arbiter page
-2. **Enhancement:** Handle externally deployed contracts (sync DB or manual linking)
-3. **Feature:** Auto-sync deals when contract is first detected on-chain
-4. **Performance:** Consider caching for CPRA ledger queries
-5. **UX:** Add more detailed error messages for wallet/party mismatches
+1. **Enhancement:** Handle externally deployed contracts (sync DB or manual linking)
+2. **Feature:** Auto-sync deals when contract is first detected on-chain
+3. **Performance:** Consider caching for CPRA ledger queries
+4. **UX:** Add more detailed error messages for wallet/party mismatches
 
 ---
 
