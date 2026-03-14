@@ -202,37 +202,25 @@ export default function ArbiterPage() {
   const [caseDealInfo, setCaseDealInfo] = useState<Record<string, { formData: any; dealId: string }>>({});
 
   useEffect(() => {
-    console.log('[caseDealInfo] Effect running for', myCases.length, 'cases');
     myCases.forEach(c => {
-      if (caseDealInfo[c.address]) {
-        console.log('[caseDealInfo] Already loaded:', c.address);
-        return;
-      }
-      console.log('[caseDealInfo] Fetching by-escrow for:', c.address);
+      if (caseDealInfo[c.address]) return;
       fetch(`/api/deals/by-escrow/${c.address}`)
         .then(r => r.json())
         .then(({ deal }) => {
           if (deal?.form_data) {
-            console.log('[caseDealInfo] by-escrow SUCCESS for', c.address, 'dealId:', deal.id);
             setCaseDealInfo(prev => ({ ...prev, [c.address]: { formData: deal.form_data, dealId: deal.id } }));
           } else if (c.documentHash) {
-            console.log('[caseDealInfo] by-escrow returned no deal, trying by-hash:', c.documentHash);
             fetch(`/api/deals/by-hash/${c.documentHash}`)
               .then(r => r.json())
               .then(({ deal: d2 }) => {
                 if (d2?.form_data) {
-                  console.log('[caseDealInfo] by-hash SUCCESS for', c.address, 'dealId:', d2.id);
                   setCaseDealInfo(prev => ({ ...prev, [c.address]: { formData: d2.form_data, dealId: d2.id } }));
-                } else {
-                  console.log('[caseDealInfo] by-hash returned no deal for', c.documentHash);
                 }
               })
-              .catch((e) => { console.log('[caseDealInfo] by-hash FAILED:', e); });
-          } else {
-            console.log('[caseDealInfo] No deal and no documentHash for', c.address);
+              .catch(() => {});
           }
         })
-        .catch((e) => { console.log('[caseDealInfo] by-escrow FAILED:', e); });
+        .catch(() => {});
     });
   }, [JSON.stringify(myCases.map(c => c.address))]);
 
